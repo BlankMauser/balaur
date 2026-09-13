@@ -70,6 +70,7 @@ being built, marked `done`, never back in the shipped one.
 | **A green `main`** — the same outputs on every machine, a bad file an error rather than a crash, and documents that match the code. | (0.2) | [PLAN-hardening.md](PLAN-hardening.md) |
 | **What the editor's frame costs** — the docks rebuild every row every frame, so the shell costs more than a 60 Hz budget; a list draws only what is visible. | (0.2) | [PLAN-editor-performance.md](PLAN-editor-performance.md) |
 | **Node conversions** — reparent, make scene root, save a branch as a scene, fit a collider to what is drawn, and bake a boolean. | (0.2) | [PLAN-node-conversions.md](PLAN-node-conversions.md) |
+| **The editor on a tablet and a phone** — the shell folds to one dock and a bottom bar on a narrow screen, and every control answers a finger. | 0.8 | [PLAN-responsive.md](PLAN-responsive.md) |
 | **More than one window** — a second OS window: a dock torn off the editor, or a game on a second display. | 1.0 | no plan |
 | **A shader graph** — the canvas the Rune graph brings, emitting WESL instead of Rune, with `[params]` still read off the linked shader. | 1.0 | [PLAN-shaders.md](PLAN-shaders.md) |
 | **Modelling in the viewport** — push and pull a face, bevel an edge, subdivide and unwrap with `xatlas`, editing the `mesh` asset every shape already is. | 1.0 | no plan |
@@ -86,7 +87,7 @@ being built, marked `done`, never back in the shipped one.
 | **Texture import settings** — repeat, mipmaps, anisotropy and premultiplied alpha, which wait on a sampler the renderer does not expose, plus GPU compression at export. | 0.2 | [PLAN-textures.md](PLAN-textures.md) |
 | **FBX import** — `balaur import` over the `ufbx` crate, for the meshes, rigs and clips that never ship as glTF. | 0.7 | no plan |
 | **Godot import** — `balaur import` over `project.godot`, `.tscn`, `.tres` and `.gdshader`, writing scenes, assets and a report naming what did not convert. | 0.2 done | [PLAN-godot-import.md](PLAN-godot-import.md) |
-| **One way to say each thing** — one spelling per scene key and one call per script action: handles over module functions, fields over setters, tables over shorthands. | 0.2 | [PLAN-one-way.md](PLAN-one-way.md) |
+| **One way to say each thing** — one spelling per scene key and one call per script action: handles over module functions, fields over setters, tables over shorthands. | 0.2 done | [PLAN-one-way.md](PLAN-one-way.md) |
 | **GDScript bodies** — each `.gd` function's body translated to Rune, with a Variant shim, and a marked comment where a line did not carry. | 0.2 done | [PLAN-gdscript.md](PLAN-gdscript.md) |
 | **Asset streaming** — a load that runs off the tick, a scene added to one already running, and an asset dropped when nothing names it. | 0.6 | no plan |
 | **Scripts you can take** — fifteen small scripts with `exports()` in the library dock, dropped onto a node and edited in place. | 0.5 | [PLAN-authoring-without-code.md](PLAN-authoring-without-code.md) |
@@ -113,7 +114,7 @@ being built, marked `done`, never back in the shipped one.
 | **Gases and smoke** — a buoyant volume that rises, spreads and cools, read by the renderer as a density field rather than as particles. | 1.0 | [PLAN-physics.md#gases-and-smoke](PLAN-physics.md#gases-and-smoke) |
 | **Granular materials** — sand, mud and snow as a fluid with friction and a yield stress, in 2D and 3D, on the fixed step. | 1.0 | [PLAN-physics.md#granular-materials](PLAN-physics.md#granular-materials) |
 | **Animation blending** — state machines that crossfade between clips, authored or converted from an `AnimationTree`, and blend trees so a rig can run two clips at once. | 0.2 | [PLAN-animation-and-resources.md](PLAN-animation-and-resources.md) |
-| **Visibility and tint on a track** — `visible` and `tint` as clip properties on the appearance every node carries, and names and flags on any component property, held from key to key. | 0.2 | [PLAN-godot-import.md#22-visible-as-an-animation-track](PLAN-godot-import.md#22-visible-as-an-animation-track) |
+| **Visibility and tint on a track** — `visible` and `tint` as clip properties on the appearance every node carries, and names and flags on any component property, held from key to key. | 0.2 done | [PLAN-godot-import.md#22-visible-as-an-animation-track](PLAN-godot-import.md#22-visible-as-an-animation-track) |
 | **A sequencer** — cutscenes and cameras on a timeline, with tracks that call something rather than only move it. | 0.3 | no plan |
 | **Root motion** — a clip that moves the character rather than sliding under it, its root delta handed to `character2d` and `character3d` per tick. | 0.7 | no plan |
 | **Pause, time scale and smooth frames** — a `process` mode per subtree, time scale, interpolation between fixed steps, `max_fps`, vsync, and a tick rate setting. | 0.2 | [PLAN-time.md](PLAN-time.md) |
@@ -141,13 +142,14 @@ being built, marked `done`, never back in the shipped one.
 | **Widgets, text and the batteries** — nineteen widget kinds over cosmic-text, containers that hand out rects, text, and the batteries: audio buses, input actions, saves, localisation. | 0.1 done | no plan |
 | **Lists, trees and tables** — `list`, `tree` and `table` kinds with selection, columns, and only the rows in view built, which every dock hand-rolls today. | 0.2 | [PLAN-widgets.md#data-views](PLAN-widgets.md#data-views) |
 | **Menus, popups and tooltips** — a menu bar, a context menu, a tooltip and a toast in a scene, over a pass that draws above the widget tree. | 0.2 | [PLAN-widgets.md#menus-and-popups](PLAN-widgets.md#menus-and-popups) |
-| **A picture that clicks, and checks that are exclusive** — an `image` naming an `on_click` senses it, a `group` makes a radio row, a `button` takes a picture, and every Godot anchor preset maps. | 0.2 | [PLAN-godot-import.md#24-the-widget-kinds](PLAN-godot-import.md#24-the-widget-kinds) |
+| **A picture that clicks, and checks that are exclusive** — an `image` naming an `on_click` senses it, a `group` makes a radio row, a `button` takes a picture, and every Godot anchor preset maps. | 0.2 done | [PLAN-godot-import.md#24-the-widget-kinds](PLAN-godot-import.md#24-the-widget-kinds) |
 | **Text a game can edit** — a multi-line `text` kind, a `code` kind with the gutter and colouring the editor has, a numeric `spin`, and links a label reports. | 0.2 | [PLAN-widgets.md#text](PLAN-widgets.md#text) |
 | **Aspect and camera containers** — an `aspect` box that holds a ratio, and a camera's texture drawn as a widget the layout sizes. | 0.3 | [PLAN-widgets.md#containers](PLAN-widgets.md#containers) |
 | **A graph canvas** — a `graph` kind of nodes, ports and links a drag connects, with pan and zoom, under both the Rune graph and the shader graph. | 0.5 | [PLAN-widgets.md#containers](PLAN-widgets.md#containers) |
 | **Pickers, and drag and drop** — a colour wheel and a file chooser as widget kinds, with a payload one widget offers and another takes. | 0.5 | [PLAN-widgets.md#pickers-and-drag](PLAN-widgets.md#pickers-and-drag) |
-| **Accessibility** — a screen reader over the widget tree, text scaling, captions, and colour-blind-safe defaults. | 0.6 | no plan |
-| **A controller-only shell** — directional focus between widgets, an on-screen keyboard, safe-area insets applied to layout, and button glyphs that follow the pad. | 0.8 | no plan |
+| **Accessibility** — a screen reader over the widget tree, captions, and colour-blind-safe defaults. | 0.6 | no plan |
+| **A controller-only shell** — directional focus between widgets, an on-screen keyboard, and button glyphs that follow the pad. | 0.8 | no plan |
+| **A layout that fits the screen** — width, height and touch classes that widgets, themes and settings answer to, with a touch-target floor and a game's UI scale. | 0.6 | [PLAN-responsive.md](PLAN-responsive.md) |
 
 The `widget` component is what a scene holds, and `ui::*` is what the editor
 draws itself with. `PLAN-widgets.md` is the list of what only the second one
@@ -157,7 +159,7 @@ can do today, in the batches it would be built in.
 
 | Item | Milestone | Plan |
 | --- | :-: | --- |
-| **An inherited tint** — a colour multiplied down a subtree, so one key fades a whole panel or rig rather than one per node. | 0.2 | [PLAN-godot-import.md#21-an-inherited-tint](PLAN-godot-import.md#21-an-inherited-tint) |
+| **An inherited tint** — a colour multiplied down a subtree, so one key fades a whole panel or rig rather than one per node. | 0.2 done | [PLAN-godot-import.md#21-an-inherited-tint](PLAN-godot-import.md#21-an-inherited-tint) |
 | **What draws today** — sprites, tile maps, 2D lights, `light3d` and an `environment`, PBR, WESL shaders, the finishing passes, sixteen primitives, booleans and particles. | 0.1 done | no plan |
 | **The 3D look** — image-based lighting and SSAO bound, glTF keeping its factors and maps, glass, mirrors, probes, finishing passes and layer stacks. | 0.2 | [PLAN-3d-rendering.md](PLAN-3d-rendering.md) |
 | **Lit normal-mapped sprites** — 2D lights and shadows are built, and the normal map is what is left. | 0.3 | [PLAN-rendering.md](PLAN-rendering.md) |
@@ -190,7 +192,7 @@ can do today, in the batches it would be built in.
 
 | Item | Milestone | Plan |
 | --- | :-: | --- |
-| **Typed Gamend bindings** — one script function per operation of Gamend's OpenAPI document, generated by `scripts/gen_gamend.py` and checked in, with realtime events typed per channel. | 0.4 | [PLAN-gamend-bindings.md](PLAN-gamend-bindings.md) |
+| **The Gamend SDK** — a Rune addon generated in the Gamend repository from its OpenAPI document and realtime protocol, one function per operation, copied into the library. | 0.4 | [PLAN-gamend-bindings.md](PLAN-gamend-bindings.md) |
 | **A game server per lobby** — launched and registered by Gamend. | 0.4 | [PLAN-gamend.md#3-steps](PLAN-gamend.md#3-steps) |
 | **Lobby tokens and rejoin** — lobby-scoped tokens, and a grace period to rejoin. | 0.4 | [PLAN-gamend.md#1-design](PLAN-gamend.md#1-design) |
 | **The match record** — the match recording uploaded as the lobby's record. | 0.4 | [PLAN-gamend.md#1-design](PLAN-gamend.md#1-design) |

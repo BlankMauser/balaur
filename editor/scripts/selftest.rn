@@ -560,9 +560,7 @@ pub fn tiles_tool(S) {
     check(tiles::paint(S, 0, 0, 3), "painting writes a cell");
     check(tiles::cell(S, 0, 0) == 3, format!("the cell holds the tile ({})", tiles::cell(S, 0, 0)));
     check(!tiles::paint(S, 0, 0, 3), "painting the same tile again changes nothing");
-    let text_form = S.doc[S.sel].tilemap.cells;
-    check(text_form is String, "a map authored as text stays text");
-    check(text_form.starts_with("3"), format!("the text spells the tile ({})", text_form));
+    check(S.doc[S.sel].tilemap.cells is Vec, "the map is written back as rows of ids");
 
     check(tiles::paint(S, 0, 0, -1), "erasing writes an empty cell");
     check(tiles::cell(S, 0, 0) == -1, "the cell is empty again");
@@ -584,12 +582,6 @@ pub fn tiles_tool(S) {
     check(tiles::fill_rect(S, (0, 0), (1, 1), 2), "a rectangle fills every cell in it");
     check(tiles::cell(S, 0, 0) == 2 && tiles::cell(S, 1, 1) == 2, "the rectangle's corners are filled");
     check(tiles::cell(S, 2, 0) == -1, "and nothing outside it is");
-
-    // A tile past the alphabet has no character, so the whole map turns into
-    // rows of ids rather than losing it.
-    check(tiles::paint(S, 0, 0, 40), "a tile past the alphabet is painted");
-    check(!(S.doc[S.sel].tilemap.cells is String), "and turns the map into rows of ids");
-    check(tiles::cell(S, 0, 0) == 40, "the id form holds the tile");
 
     let layers = S.doc.len();
     // Counted rather than fixed at two: the game's own maps may be under this
@@ -1860,6 +1852,35 @@ pub fn librarydemo(S) {
     check(listed.len() > 0, "the manifest lists entries");
     check(unknown == 0, "every entry is of a kind the dock has a chip for");
     check(absent == 0, "and every file it names is in the library");
+
+    // An addon lands whole at its own path, and placing it again changes
+    // nothing: a game requires it by that path, so a numbered copy would
+    // answer nobody.
+    let addon = None;
+    for entry in listed {
+        let e = util::obj(entry);
+        if e.get("kind").unwrap_or("") == "addon" && addon.is_none() {
+            addon = Some(e);
+        }
+    }
+    if let Some(e) = addon {
+        let dir = e.file;
+        // Anything a previous run left, so this run measures its own copy.
+        if fs::exists(root + dir) {
+            fs::remove(root + dir);
+        }
+        let top = dir.split('/').collect::<Vec>()[0];
+        let had_top = fs::exists(root + top);
+        library::place(S, e);
+        let count = util::vec(fs::list(root + dir)).len();
+        check(count > 0, format!("placing {} copies its files in", e.name));
+        library::place(S, e);
+        check(util::vec(fs::list(root + dir)).len() == count, "placing it again adds nothing");
+        check(!fs::exists(root + dir + "_2"), "and numbers no copy");
+        let gone = if had_top { dir } else { top };
+        fs::remove(root + gone);
+        check(!fs::exists(root + dir), "and the project is left as it was");
+    }
 
     // A sky is copied under skies/ and then only named, since the drop that
     // would have copied it already happened.
