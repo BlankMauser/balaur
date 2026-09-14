@@ -1,8 +1,10 @@
-> **Status:** written 2026-09-13, nothing built. Written after an investigation
-> of the editor and a game's UI on a tablet and a phone, and of native platform
-> UI, which §0 declines. Revised the same day: a phone editor ships, and the
-> class thresholds are `[ui]` settings rather than constants. §3 is the
-> surface, §4 the steps; each step names the test it ends with.
+> **Status:** steps 1 to 5 built 2026-09-13, with their tests. Step 6 and 7's
+> folding behaviour is built; what is left of them is the bottom bar, the dock
+> sheets and the scrollable strips, and §8 says where the last one stopped. Written the same day after an investigation of the editor
+> and a game's UI on a tablet and a phone, and of native platform UI, which §0
+> declines. A phone editor ships, and the class lines are `[ui]` settings
+> rather than constants. §3 is the surface, §4 the steps, and §7 records what
+> each built step did and what it found.
 
 # Plan: a layout that fits the screen and the finger it gets
 
@@ -236,8 +238,9 @@ scene's, and `layout.rn` reads the class for what the tables cannot say.
 | --- | --- |
 | `wide`, `tall`, `pointer` | Today |
 | `touch` | The floor. Long press for context menus and tooltips. Gizmo handles at the floor's size. Two-finger pan and pinch on the stage, read from `input.pan()` and `input.pinch()` rather than the mouse. Every hover-only control gets a resting form. A drag in the outliner starts from a long press |
-| `medium` | The editor's compact mode, and one side dock at a time: opening one folds the other |
-| `narrow` | One sheet, the stage. The docks become a bar of tabs along the bottom; a tapped tab opens its dock as a sheet over the stage and a second tap closes it. The tool rail folds to one row above the bar. Dialogs fill the screen. The top bar keeps play and the palette |
+| `medium` | The editor's compact mode, both side docks folded away at the start, and an unfolded one taking half the screen |
+| `narrow` | All three docks folded at the start, and one at a time: unfolding one folds the other two. An unfolded dock takes the whole screen, and its own fold is the way back. The rail, the chips and the other handles go with it |
+| `short` | The bottom dock folds as well, and the one-at-a-time rule applies: a phone on its side is wide enough to read a seam and too short to stack anything under the stage |
 | `short` | The bottom dock hides and the top bar folds as `narrow` does |
 
 A script on a phone is read and lightly edited; real editing wants a hardware
@@ -256,11 +259,12 @@ decision.
 | The lines | Planned: `[ui] narrow_below`, `wide_from` and `short_below`, defaults 600, 840 and 480, overridable per tag |
 | A project's own class words | Not planned: the words are the contract a theme, a scene and an addon share. A fourth line is a script reading `ui.screen_size()` |
 | A game played in the editor | Planned: its class from the layer's rect and its own `[ui]` lines, declared by the editor at play |
-| A widget that changes by class | Planned: a table per class word on the `widget` component, any declared key but `kind`, resolved each frame in the declared order |
+| A widget that changes by class | Have: a table per class word on the `widget` component, any declared key but `kind`, resolved each frame in the declared order |
+| A widget that needs a surface of a stated size | Have: `hide_narrower`, `hide_wider` and `hide_shorter`, in design pixels of the surface, for where the words are not fine enough. A game's minimap states the width it needs; a phone-only control states the width it is not wanted past |
 | A typo in a class table | Planned: an error at load naming the key |
 | A theme that changes by class | Planned: `[<kind>.<class>]` in a `widget_theme` asset, beside `[<kind>.hover]` |
 | A setting that changes by class | Have, for the input class: `[override.touch.<table>]` through the tag. Not planned for width and height: a tag is a run's constant |
-| A touch target | Planned: the default theme's `touch` table sets `interact_size` and floors `Style::height` at 44 for interacting roles |
+| A touch target | Have, and not as a floor: the shell draws larger on a touch screen and the theme states a bigger box under `touch`, which grow a control's glyph and its bar with it. §9 says why a floor did not |
 | A fat scroll bar | Not planned: content drags, with inertia |
 | A tooltip under a finger | Planned: one helper over the six hover sites, opening on `long_touched` under touch |
 | A context menu under a finger | Have, in PLAN-widgets: `long_touched` opens `context`. Planned: `max_click_duration` from `[input] long_press_seconds` |
@@ -352,3 +356,494 @@ orientation.
 4. **Android's text size.** This is the third plan wanting the GameActivity
    glue, after the keyboard's insets in PLAN-touch and the intent in
    PLAN-mobile-export.
+
+## 7. What the built steps did
+
+**Step 1, one zoom.** The kiss3d fork holds the UI zoom the host sets, reports
+the display's scale as `native_pixels_per_point`, and converts events, the
+screen rect and the tessellation by points per pixel. It no longer calls
+`set_pixels_per_point`, which in egui 0.36 is a zoom setter in disguise and was
+pinning the zoom at 1. Balaur hands `[ui] scale` to it once a frame, and about
+240 hand multiplications came out of `crates/balaur_ui`. A design pixel is a
+point everywhere.
+
+Three bugs came with it, all of the same shape: a number in physical pixels
+used where points were wanted.
+
+- `DeviceFacts::ui_scale` was the scale a script set, not physical pixels per
+  design pixel, so it ignored the display's own. Every touch control was
+  placed at half its proper offset on a Retina screen.
+- `crates/balaur_render/src/touch_draw.rs` painted those physical placements
+  as egui points, doubling them again.
+- `above_keyboard` inset a layout by a physical keyboard height.
+
+**Step 2, the classes.** `touch` and `pointer` joined `Tags`, derived from the
+recorded `platform.touchscreen` and restored with it, so a session recorded on
+a phone resolves the phone's overrides replaying on a desktop. The five screen
+words, `ClassLines` and the two classifying functions sit beside `DeviceFacts`;
+`ui.width_class()` and `ui.height_class()` answer them, and `ui::NARROW` and
+its siblings are script constants.
+
+**Step 3, the override shape.** A widget takes a table per class word, any
+declared key but `kind`, resolved in the arena against the frame's classes and
+folded into the arena stamp, so a rotation rebuilds the forest the way a locale
+switch already did. A key a class table invents is refused at load, naming it.
+A `widget_theme` takes the same words beside its `[kind.hover]` tables, folded
+in `WidgetTheme::resolved` under a cache key that carries the classes. `[ui]`
+gained `scale`, `system_text_size` and the three lines. `DeviceFacts` gained
+`text_scale`, read from iOS Dynamic Type through the fork and 1 elsewhere.
+
+Two things the plan did not foresee:
+
+- The arena folds a widget's visibility with its node's own every pass, and it
+  read the widget back out of the world to do it, which is the widget as
+  authored rather than as the class resolved it. `Placed` now carries the
+  resolved answer.
+- A component read is what saves a scene, and it is built from the resolved
+  struct, so the class tables had to be put back into it or a save would drop
+  what the scene was authored with.
+
+**Step 4, the floor and the finger.** The floor was built as a minimum box on
+every kind a finger reaches, and on a real screen it was wrong. §9 says what
+replaced it. `[input] long_press_seconds` reaches egui's
+`max_click_duration` through the settings registry, so the widget layer's long
+press and the tick's are one number. `safe_area` on a root insets it by what a
+notch covers.
+
+The tooltip helper took all seven `on_hover_*` sites. It times the hold itself
+rather than reading `Response::long_touched`, which egui sets only on a widget
+that senses a click: a tooltip's own rect senses hover, and giving it a click
+would take the press off the control under it.
+
+A drag payload that starts from a long press has nothing to start from yet.
+The widget layer has no payload seam; [PLAN-widgets.md](PLAN-widgets.md) has it
+at 0.5 under pickers and drag. The row moves there, and the rule it carries is
+that a finger's drag begins with a hold.
+
+**Step 5, the proof harness.** `balaur edit --size WIDTHxHEIGHT` replaces the
+constant framebuffer, and `--touch` on both `edit` and `run` sets the fact and
+the tag together, since a widget asks the fact for its floor and a setting asks
+the tag for its override. `scripts/uiaudit.sh` gained a second shooter and four
+shots, one per screen class, because a class is read from the framebuffer and
+the `scale:` state cannot stand in for it.
+
+What those four shots show, on the first run: a tablet at 834 by 1194 is a
+working editor, with a real viewport, taller rows and a reachable tool rail. A
+phone at 390 by 844 still draws all three docks side by side, so the viewport
+is a slit and the inspector is clipped. That is the layout step 7 is for, and
+it is now a picture rather than a prediction.
+
+## 8. The shells, as far as they are built
+
+The folding half of steps 6 and 7 is built, from the direction that a dock
+should start out of the way and open to something worth reading.
+
+- Both side docks start folded on every class but `wide`, and unfold again
+  when the screen grows back. Applied on the change, so a reader who opens one
+  keeps it until the screen itself changes.
+- Height folds them too, which the first build missed. A phone on its side is
+  844 design pixels wide, past the line a layout may spread out at, and 390
+  tall. It read `wide` and kept all three docks over a stage two centimetres
+  high. A screen that is `short` now folds the side docks and the bottom dock
+  both, and takes the one-at-a-time rule with it.
+- On `narrow`, unfolding one folds the other: there is room for the stage and
+  one sheet, and two would leave nothing between them.
+- An unfolded dock takes the screen less 56 design pixels on `narrow`, and
+  half the screen on `medium`. A dock somebody unfolded on purpose is one they
+  want to read, and a 220 pixel column of it on a phone is a list of truncated
+  words. The strip of stage that is left is the way back.
+- A start-up state that opens a dock survives the first fold, since it asked
+  before the screen had been read.
+
+The shots say it works: a phone gets the whole viewport, and the outliner it
+opens is the whole phone less the tool rail.
+
+**The strips scroll now.** The top bar and the three dock tab rows are each a
+`scroll` node around the pooled row, so they clip at their sheet's edge and
+drag sideways instead of drawing past it. Tab names keep their length: the
+truncation that put an ellipsis in every one of them was there because nothing
+shrank a button and a long row pushed the fold off the sheet.
+
+Two things had to be true first, and neither was obvious.
+
+- **A scroll states its own height.** The kind measures nothing on either
+  axis, so in a row it took the width its `grow` asked for and no height at
+  all, and everything inside it was clipped to nothing. That is what emptied
+  the top bar on the first attempt.
+- **What must stay reachable sits outside it.** A dock's fold and its panel's
+  own tools were at the end of the same strip as the tabs, so a scroll around
+  the lot would have dragged them away. The head is now a scrolling row of
+  tabs and a fixed tail beside it.
+
+`ui::scroll` also takes an `axis` of `horizontal`, `vertical` or `both`, for
+anything the editor draws itself rather than as nodes.
+
+## 9. Why the floor became a scale
+
+Built as §2 rule 4 said, a floor of 44 design pixels on every kind a finger
+reaches. The first screens of the editor under it were worse than the ones
+before, in three ways the rule could not see.
+
+- **It grew a box and not its contents.** A 26 pixel icon button became 44 and
+  kept its 14 pixel glyph, so the icon sat in a field of empty plate. Rows of
+  controls that used to match no longer did.
+- **It overflowed the bar holding it.** The shell's head row is 26 design
+  pixels tall and its buttons are its own height. Floored to 44, they drew
+  outside the bar.
+- **It made nothing easier to read.** Text, icons and spacing kept their
+  sizes, so a phone still showed desktop-sized type in taller boxes.
+
+The mechanism that does work is the one step 1 built. A scale grows every part
+of a control together, glyph and plate and the bar around it, which is what
+`set_zoom_factor` is for and what iOS and Android do with their own display
+scaling.
+
+So the target is reached by two things that already existed:
+
+- **The shell draws larger on a touch screen.** `scale_for_screen` returns at
+  least 1.35, above whatever the reader set. Not the 1.7 that 26 design pixels
+  would need alone: a phone is 390 points wide, and at 1.7 the shell has 229
+  to lay out in, which is less than its own chrome.
+- **The theme states a bigger box under `touch`.** `[roles.icon_button.touch]`
+  and its siblings ask for 33 design pixels, which at 1.35 is 44.5 points. The
+  scene's own bar carries a `touch` table beside them, so it grows with what it
+  holds. This is step 3's class table, used for the thing it was for.
+
+The editor's selftest measures a drawn control and asserts the points it
+covers, so the pair is checked together rather than either alone.
+
+Three inconsistencies in the editor's theme came out of the same screens, none
+of them to do with touch. The bar icons had boxes of 21, 26 and 28 and glyphs
+of 12 and 14, and the transport buttons were the only round controls in the
+shell. They are one box and one glyph now, and square.
+
+## 10. What the first screens under a finger were still getting wrong
+
+Four things, all of them the same shape: a number stated once for a cursor and
+read by something that had grown.
+
+- **The bar drew past its own edge.** Nothing clipped a strip, so a row longer
+  than its sheet painted over the window. §8 says what fixed it.
+- **The sheet holding the bar did not grow with it.** `Head` is 40 design
+  pixels with 5 inside each edge, which leaves its row 30. Its buttons are 33
+  where a finger reaches them, and the 3 pixels came off one side, which reads
+  as uneven padding. It carries a `touch` height now, as the rows inside it do.
+- **A tab was not a control a finger could pick.** `tab_h` answered 20 in a
+  compact window, so a phone drew the smallest thing on screen where it most
+  needs the largest. It answers 33 on a touch screen, and the tile centres its
+  two halves, which is why the close mark sat low.
+- **The close mark read as half the name beside it.** Its glyph draws well
+  inside its own box, so at the name's size it looked smaller than the text;
+  it is stated larger than the text rather than equal to it.
+
+One thing was not fixed. The play glyph fills more of its em box than the
+pause and stop glyphs do, so at one font size the three do not read as one
+set. That is the icon set's own proportion rather than a layout fault, and the
+fix is a size per glyph or a different set, not a rule.
+
+## 11. Three more, from the screens after that
+
+Each one the same seam again: a control or a strip that answered to a number
+meant for a cursor.
+
+- **A folded dock's handle was not an icon button.** It was built from the
+  zoom reading's tile and padding, 32 by 26, beside icon buttons that had
+  grown to 33 square. It takes the icon button's own size now, and the room
+  it reserves above the tool rail and at the head of the chip strip follows
+  it, so nothing it clears is measured twice.
+- **The tool rail pushed the axis pill sideways.** The rail is a column of
+  the centre, so the stage begins after it and the pill sat wherever the rail
+  ended. The rail stops well above the stage's foot, so the foot strip starts
+  at the rail's own left edge instead. A dock opening still moves it, which is
+  the only thing that should.
+- **The zoom reading was cut off at the plus.** Its frame states a width, and
+  the width was `50 + 6.6` a character, which is two 20 pixel pills and the
+  text. The pills are 28 where a finger reaches them, so the plus fell outside
+  the frame. The width is computed from the pill it actually draws.
+
+## 12. Measured, not eyeballed
+
+The screens after §11 were judged by eye and the eye was wrong about which
+controls disagreed, so the shell's own rects were printed instead. Three
+numbers came out of one bar: the persona tabs were 26 tall, the transport 30,
+and the theme toggle 26 wide against the transport's 38.
+
+None of it was the touch work. The bar has always drawn its tabs at
+`row_h - 4` and its trailing controls at `row_h`, and an icon-only button left
+to itself is as wide as its glyph plus the theme's side padding, which is a
+different width per glyph. A stated width with that padding still inside it
+squeezed the glyph off centre, which is why the theme toggle's moon sat high
+and left in its own box.
+
+So the bar states one height for everything in it, and an icon-only control
+states a square box and no side padding. Every one of them measures 33 by 33
+now, and the selftest asserts it: it walks the bar, the dock's tabs and its
+tail, takes the shortest rect any of them drew, and fails under 44 points.
+Measured off what was drawn, because a control's size comes from the theme,
+the widget that states one and the scale together, and only the rect answers
+for all three.
+
+Four more came out of the same print:
+
+- **The foot strip was 28 tall and its pills 28**, so the zoom reading lost
+  its bottom edge. The strip's height follows the pills now.
+- **The fold handles drew their glyph at 12** where the bar draws at 14.
+- **The output panel drew under an empty hatch of its own height.** The shared
+  hatch gives its room up to a canvas view that has a node, and a log has a
+  node too; it did not know that. The log is 123 tall where it was 62, and the
+  gap under the tabs is gone.
+- **The viewport's chip strip painted over what sat beside it.** It scrolls
+  sideways now, like the bars.
+
+## 13. One panel, and what goes with it
+
+A phone holds the stage and one sheet, so all three docks start folded and
+unfolding one folds the other two. The bottom dock is in the rule now: it was
+left out, and the class default then reopened it under whichever side panel
+had just been asked for.
+
+The tool rail and the viewport's chips follow the same question rather than a
+class of their own. They show when there is more than one panel's worth of
+room, which is one rule read off the same test the docks use: a strip of stage
+behind an unfolded sheet is the way back, and a rail over the whole of it
+leaves nothing to point at. The chips used to paint across the panel beside
+them, because the stage rect they are placed against is not settled when they
+are decided.
+
+Three sizing faults came out of the same screens, all in the editor's own
+chrome rather than in the engine:
+
+- **The fold in a dock's head was 22 wide** beside icon buttons of 33, and it
+  is the control somebody has to hit to get their panel back.
+- **The play glyph fills its em box** where the pause bars and the stop square
+  sit inside theirs, so one font size drew three different-looking controls.
+  The transport states a size per glyph, 11 for play against 16 for the other
+  two, which is the icon set's proportion answered rather than argued with.
+- **The dock hatch outlived its panel.** Covered in §12.
+
+## 14. Minimums, and the room they are asked against
+
+The rules that decide what the editor draws beside its docks read the room
+rather than the screen's class, which is what makes them one rule each instead
+of one per device.
+
+- **The engine's half is three keys on a widget.** `hide_narrower`,
+  `hide_wider` and `hide_shorter` state the surface a widget needs in design
+  pixels, and it is not drawn on one that cannot give it. Read against the
+  surface, like the class words, so it cannot oscillate: hiding the widget
+  changes nothing it was measured against. A game's minimap says 600 and a
+  phone's thumbstick says it is not wanted past 600.
+- **The editor's half is one number.** `layout::stage_room` is the stage the
+  docks leave, from the widths the layout is about to use, asked before it
+  runs. The tool rail shows where its column and a stage worth pointing at
+  fit beside each other, and the chip and foot strips where the stage is
+  taller than the two of them.
+- **One rule is not about room.** A sheet that is the whole screen shows one
+  way out, its own fold. A handle to a second sheet would open it over the
+  first, so on a screen with one sheet at a time the other handles go.
+
+The bottom dock is the case that told the two apart. Open on a phone, it
+leaves the stage its full width and most of its height, so the rail, the
+chips, the axis pill and the zoom reading all fit and all stay. A side dock
+open leaves a strip, and none of them fit.
+
+## 15. What is good about this, and what is not
+
+Asked 2026-09-14, after the screens looked right: is the design sound, is
+there a better API, is it efficient, is it general.
+
+**Sound.** Two facts about the screen, read in one place, that everything
+else answers to. The input class is a tag, so every existing override works
+on it; the width and height are per frame, so a rotation is a frame. The same
+override shape reaches a widget, a theme and a setting, and a game's HUD gets
+every piece the editor got. A phone editor session replays on a desktop.
+
+**Two ways to ask one question.** A class word and a numeric surface line
+both answer "is the screen small". The words are the contract a theme, a
+scene and an addon share; the numbers are for a widget whose line is its own.
+CSS has named breakpoints in every framework and raw queries beneath them,
+for the same reason. Documented as: words for what is shared, numbers for what
+is not.
+
+**Surface, not container.** `hide_narrower` reads the whole surface, so a
+sidebar that should fold when its own panel is narrow cannot say so. A
+container query needs the layout solved once to know the room and again to
+apply the answer, and a naive version oscillates. The surface reading is
+stable and answers the game's case. The editor's own version is in script,
+`stage_room`, and it duplicates the layout's arithmetic, which is the weakest
+seam here: two places know how wide a dock is. The fix is a layout in two
+phases, docks then chrome, and it is the thing to do next if the rules grow.
+
+**Two numbers that must agree.** The touch box of 33 in the theme and the
+scale of 1.35 in the shell clear 44 together and are stated apart. The
+selftest measures the drawn rect, so a drift fails, but a derivation would be
+better than a guard: the shell could compute its scale from the target and
+the theme's own number.
+
+**Efficient enough, after two fixes.** A class table costs its widget one
+pointer, and resolves only on an arena rebuild, which a rotation is. The
+theme's resolved-style cache keyed a generation beside each entry and never
+evicted, so every rotation left the last screen's styles behind for the life
+of the theme; it empties on a new generation now. And `pass_classes` cloned a
+vector per widget per rebuild, which is a refcount now. What is still paid
+per frame: the class words are computed three times a pass, for the stamp,
+the arena and the theme, and could be computed once and handed down.
+
+**The editor's rules are room-based with one exception.** One sheet at a time
+follows from the floors: a screen narrower than two side docks and a stage at
+their minimums, or shorter than the bar, a bottom dock and a stage at theirs.
+The rail and the chrome show where their own minimums fit in the room the
+docks leave. The one rule that is not about room is that a sheet filling the
+screen shows only its own fold, because a handle to a second sheet would open
+it over the first. And the strip of stage a lone sheet used to leave is gone:
+it was the way back while the handles lived on it, and dead space once they
+did not.
+
+**Two warts.** A start-up state that opens a dock has to survive the first
+class fold, which is an `asked` flag rather than an ordering; states should
+apply after the first frame reads the screen. And `hide_taller` does not
+exist, for symmetry's sake alone.
+
+## 16. The second review, and what it changed
+
+Asked again once the screens were right: whether two ways to ask one question
+is a design or a smell, whether the surface reading can be made general, and
+what to do about the three things §15 said still bothered.
+
+**Two ways stays, with the line drawn.** A class word is a name shared by a
+theme, a scene, an addon and the inspector's picker: it is what lets a theme
+written elsewhere mean the same thing in this project. A numeric line is one
+widget's own business. Words for what is shared, numbers for what is not, and
+the second is implemented on the first: a class is a line with a name.
+
+**The lines read the room now, not only the screen.** `hide_narrower` and its
+two siblings are measured against the nearest container that states a size or
+grows, where that container drew last pass; a root that hugs its contents, and
+a widget under nothing definite, read the screen. That is the container query
+the first build declined, without the oscillation it feared: a definite
+container's box does not depend on the child that asks. The cost is one pass
+of lag on a resize, which a resize hides. The test is a stated box that hides
+its child at 200 wide and shows it at 400, on a 1200 wide screen.
+
+**What still bothered, fixed.** The scale is derived, the target over the box
+the theme states, rounded up to a twentieth. The class words are read once a
+pass and handed to the arena, the stamp and the theme. The start-up states
+apply on the first frame after the fold rather than before it, and the flag
+that let one survive the fold is gone.
+
+**Three things the round found underneath.**
+
+- **`[ui] scale` seeded over a script's ask.** The seed runs on the first
+  tick, after `init`, so a scale set in `init` lasted one frame. A seed that
+  found the scale already asked for leaves it; there is a test.
+- **`ui.screen_size` answered egui's placeholder on the first frame.** The
+  tick runs before the first pass, and egui's viewport is a 7407 pixel square
+  until a pass has run. It answers the size the backend published before the
+  tick, which is also what the class words read.
+- **One sheet at a time follows from the floors,** not from a class word: a
+  screen narrower than one side dock and a stage at their minimums, or
+  shorter than the bar, a bottom dock and a stage. Whether three columns fit
+  is a second question from the same floors, and decides what folds at the
+  start and whether an open dock takes half. The fold re-applies when either
+  answer changes, which the class words alone did not notice.
+
+**The inspector stacks.** A row puts its label above its control where the
+control column would fall under 200, which is what Godot's inspector does in
+a narrow dock. The desktop's default inspector is 220 wide and had the same
+clipped rows the phone showed, so it stacks there too. Two things had to be
+stated for it to work: a stacked row's slot and hatch each state the row's
+width, because a column aligns its items to the start and a node hugging its
+contents gives a right-aligned control no edge; and the row is two lines tall
+under its label, since a control aligned right of a full-width line wraps.
+
+**Every row a finger picks is finger-sized.** Trees and lists carry a `touch`
+row height of 33, and the inspector's rows and controls take a touch height
+of their own.
+
+## 17. The second look: one padding, one tile
+
+The phone inspector after §16, as the user read it: rows ran past the search
+field's edge, sections sat far apart, and the desktop's rail sat a step below
+the sheets. On the tablet a folded dock's handle was smaller than a rail tool,
+though the two are the same control on the same sheet. Each had one cause.
+
+**A scroll that moves one way fills the other.** The form's rows were the
+width their label and control columns stated, which added up to the dock's
+width less the sheet's padding and the scroll bar's strip. Nothing else in
+the sheet knew that sum, so the search field and the footer took widths of
+their own. Two engine changes make the arithmetic unnecessary. The scroll bar
+floats over its contents rather than taking a strip, so a scroll's inside is
+the sheet's padding and nothing else. A `scroll` node now says which way it
+moves, `axis`, and fills the other: a vertical scroll's column is as wide as
+the scroll, with nothing inside it stating a width. The room a one-way scroll
+solves in is definite across and free along, and the root takes the definite
+side. It keeps its `grow`, because the scroll is a root in its own solve and a
+child in its parent's, on one taffy node; zeroing `grow` there left the
+parent's solve nothing to grow, and the dock drew nothing. The test uses a
+scroll that takes what its sheet leaves, since one with a stated width fills
+it whatever its axis says.
+
+**The control column is a node.** A pooled row is its label and one row node
+the slot and the hatch live in. The row grows the column to what the label
+leaves; stacked, the column stretches under the label and the hatch fills the
+column. What a script draws into the hatch runs left to right whichever way
+the row is laid out, which is what let a right-aligned control wrap under a
+full-width line before. Every width the inspector used to compute is gone. A
+body reads `ui::available_width()` before it places anything, and the search
+and the footer take what the sheet gives. `stacked` reads the form's own drawn
+width against the width the rows were designed at, 184, so the desktop no
+longer stacks. A stacked row is a label's line and the control's, and a row
+with no label skips the line.
+
+**A row's body sits on the row's centre line,** where `ui::right` puts its own
+run, so a field and the dropdown after it are one line.
+
+**The handle is the rail's tile.** A folded dock's handle is an icon button on
+a sheet, and so is a rail tool, so the two share one geometry now. It is the
+theme's `tool` tile with the rail's inset, read through `style::role_px`
+rather than restated in the script, and the rail's marks take the theme's size
+too. The rail sat a step low because its slot took the default gap above an
+empty handle row; the slot states none.
+
+**A lone sheet is centred, and only a side sheet is lone.** The sheet sat six
+further from the left edge than the right: the centre column it replaced was
+still there at zero width, and a zero-width box still takes the row's gap
+beside it. The centre goes while a side sheet has the body, the rule the side
+docks already followed. And the bottom dock is not that sheet: it leaves the
+stage, so the two side handles stay on it while it is open.
+
+Verified as before: 149 UI tests, the editor selftest clean with and without
+touch, house, comment and generated-doc lints clean, and the post's two
+pictures regenerated from these renders.
+
+## 18. What CI found
+
+The branch's first green run needed four fixes, and the run that followed
+found three more in the shell itself.
+
+**The four CI named.** `cargo fmt` had not been run. Clippy refused the
+`edit` command: eight arguments, four bools in the `run` bag, and a `String`
+passed by value it never consumed. The `edit` flags are now one `clap` struct
+the command carries, the way the export flags already were, and the run bag
+says why its bools are bools. The editor's own checker refused three unused
+functions, left behind when the tabs learned to scroll and when the fold rule
+learned about side sheets; they are gone. And the iOS build needed the fork
+commit that follows `objc2-ui-kit` 0.3, which the lock now pins.
+
+**Three the layout selftest found, once it could run.** They only show in a
+window smaller than the one the pictures are taken at.
+
+- **The tool rail measured itself against the whole centre,** including the
+  bottom dock's share of it, so in a short window it ran into the dock. It
+  measures the column it is in.
+- **The fold followed a class word.** A window under 480 design pixels tall
+  reads `short`, which is a phone on its side, and the shell folded all three
+  docks for it — a 1000 by 470 laptop window included. Folding follows the
+  floors alone now, and the floor down the screen is the stage's own minimum
+  rather than the seam's: a dock shrinks to its floor before the stage is
+  asked to give anything up, so a small window keeps all three docks.
+- **The selftest asked every window for a desktop.** It demanded all four
+  sheets be placed and the stage be most of the window, which a folded shell
+  cannot answer. It asks what the room affords: every window owes the stage
+  inside it, no two sheets overlapping and 44 points under a finger; a window
+  with room for three columns owes the rest.

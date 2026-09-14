@@ -680,15 +680,18 @@ fn write_members(
             continue;
         };
         let name = name_of(rest);
-        let Some(value) = assigned(rest) else {
+        // Godot's `var x` with no value is null, and an `@onready var` is
+        // null until the scene is in. Both are that here, so a read before
+        // the write answers nothing rather than failing on a missing field.
+        let Some(value) = assigned(rest).filter(|_| !onready) else {
+            if onready {
+                notes.push(format!(
+                    "`@onready var {name}` reads the scene at load; set it in `init`"
+                ));
+            }
+            assignments.push(format!("    this.{} = ();", safe(&name)));
             continue;
         };
-        if onready {
-            notes.push(format!(
-                "`@onready var {name}` reads the scene at load; set it in `init`"
-            ));
-            continue;
-        }
         let body = gdscript::body(
             &[format!("var _x = {value}")],
             context,
@@ -740,6 +743,8 @@ fn write_functions(
     static_init: bool,
 ) {
     let mut seen: Vec<String> = Vec::new();
+    let mut forwarders: std::collections::BTreeMap<String, String> =
+        std::collections::BTreeMap::new();
     if static_init {
         out.push_str(&static_init_guard(&context.static_prefix));
     }
@@ -834,6 +839,28 @@ fn write_functions(
         }
         out.push_str(&body.rune);
         out.push_str("}\n");
+        for (signal, handler) in body.forwarders {
+            forwarders.entry(signal).or_insert(handler);
+        }
+    }
+    write_forwarders(out, functions, &forwarders);
+}
+
+/// What `connect` asked for: the engine delivers an event as the subscriber's
+/// `on_<name>`, and Godot named a handler of its own.
+fn write_forwarders(
+    out: &mut String,
+    functions: &[Function],
+    forwarders: &std::collections::BTreeMap<String, String>,
+) {
+    for (signal, handler) in forwarders {
+        if functions.iter().any(|f| f.name == format!("on_{signal}")) {
+            continue;
+        }
+        let _ = write!(
+            out,
+            "\n/// `{signal}`, as the engine delivers it.\npub fn on_{signal}(this, payload) {{\n    {handler}(this, payload);\n}}\n"
+        );
     }
 }
 

@@ -1,8 +1,10 @@
-> **Status:** batches one to three mostly built; this revision (2026-09-13)
-> records what landed, narrows the two open roadmap rows to what is left, and
-> settles three crate questions: `graph` on `egui-snarl`, drag and drop on
-> egui's own payload seam, long press on egui's own `long_touched`. First
-> written 2026-09-07 from nineteen kinds; the tree holds twenty-nine now.
+> **Status:** the two open 0.2 roadmap rows are done. Menus and popups:
+> `context`, `placement`, submenus, `shortcut`, `toast` and `dialog` on
+> `egui::Modal`. Text a game can edit: `[url]`, `[hint]`, `selectable`,
+> `arrows` and `suffix`. Three crate questions stay settled: `graph` on
+> `egui-snarl`, drag and drop on egui's own payload seam, long press on
+> egui's own `long_touched`. First written 2026-09-07 from nineteen kinds;
+> the tree holds thirty now.
 
 # Plan: the widget kinds a scene cannot hold yet
 
@@ -62,14 +64,14 @@ work, and the roadmap row stays open until they do.
 | Kind or property | What it is | Godot | State |
 | --- | --- | --- | --- |
 | `menu` | a button opening rows: child nodes with icons, `trailing` shortcuts, ticks and `keep_open`, or a flat `options` list | `MenuButton`, `PopupMenu` | built |
-| `row` of `menu`s | a menu bar | `MenuBar` | built; submenus to verify |
-| `dialog` | a panel over a dimmed, deaf screen | `AcceptDialog`, `ConfirmationDialog` | built |
+| `row` of `menu`s | a menu bar, with submenus on egui's own `SubMenu` | `MenuBar` | built |
+| `dialog` | a panel over a dimmed, deaf screen, on `egui::Modal` | `AcceptDialog`, `ConfirmationDialog` | built |
 | `window` | a panel with a title bar | `Window` | built |
 | `tooltip` | text after a hover delay, on any widget | `tooltip_text` | built |
-| `context` | a menu a right click or a long press opens at the pointer | `PopupMenu.popup()` at the mouse | open |
-| `placement` | where a `menu` opens: under its button, above, at the pointer, centred | `PopupPanel`, `popup_at_pointer` | open |
-| `shortcut` | a chord on a menu row that runs its `on_click` while the menu is shut | `PopupMenu` accelerators | open |
-| `toast` | a message that arrives, stacks in a corner and leaves on a timer | none | open |
+| `context` | a menu a right click or a long press opens at the pointer | `PopupMenu.popup()` at the mouse | built |
+| `placement` | where a `menu` opens: under its button, above, at the pointer, centred | `PopupPanel`, `popup_at_pointer` | built |
+| `shortcut` | a chord on any widget that clicks it while its menu is shut | `PopupMenu` accelerators | built |
+| `toast` | a message that arrives, stacks in a corner and leaves on a timer | none | built |
 
 There is no `popup` kind and there will not be one. A `menu` whose children
 are ordinary widgets is Godot's `PopupPanel` already: the rows are solved by
@@ -78,38 +80,51 @@ draws as it would anywhere. `placement` is what it lacks.
 
 The work, in order:
 
-1. **`context`.** A string property on every kind naming a `menu` node in
-   the same scene, by name. `response.secondary_clicked()` or
-   `response.long_touched()` opens that menu's rows at the pointer through
-   `egui::Popup::context_menu(&response)` and the existing `popup_rows`. The
-   long press is egui's own: a touch held past `Options::max_click_duration`
-   without moving, so the layer keeps no timer and the theme no key. The
-   widget's own `on_click` does not fire for that press.
-2. **`placement`.** An enum on `menu`: `below` (today's), `above`, `pointer`,
-   `center`, mapped to `Popup::align`, `at_pointer` and `at_position`.
-3. **Submenus, verified.** A `menu` row that is itself a `menu` should open
-   to the side, since `Popup::menu` inside an open menu is a submenu in
-   egui 0.36 (`MenuState` tracks the deepest open one). Confirm with a test
-   in `widget_layer.rs`; if egui positions it wrong, draw the row with
-   `egui::SubMenuButton` instead. Arrow keys between bar menus and along rows
-   come with egui's menu handling.
-4. **`shortcut`.** A row's chord in the spelling `ui::shortcut` takes
-   (`"cmd+shift+s"`), parsed by the same code. The layer polls the chords of
-   every visible menu's rows each frame and calls the row's `on_click` when
-   one lands, whether or not the menu is open. `trailing` defaults to the
-   chord written the platform's way, so a row says its shortcut once.
-5. **`toast`.** A root kind with `duration` in seconds and the usual
+1. **`context`.** Built. A string property on every kind naming a `menu`
+   node by name; that menu can be `visible = false`, so it draws no button
+   of its own. A secondary click or a long touch opens its rows at the
+   pointer through `egui::Popup` anchored `PointerFixed`, drawn by the
+   existing `popup_rows`. The press is read from the input rather than from
+   a response, since a kind's own controls take the click first and a list's
+   row hands no response back; a `Sense::CLICK` sensor is registered under
+   every kind that names a menu, because egui only holds a long touch on a
+   widget that senses a click, and a label senses none. The innermost widget
+   under the pointer takes the press, and its own `on_click` does not fire.
+2. **`placement`.** Built. An enum on `menu`: `below` (egui's own, flipping
+   above where there is no room), `above`, `pointer`, `center`. `pointer`
+   remembers where the pointer was when the menu opened, which is what
+   egui's context menus do; `center` pins the popup over the middle of the
+   viewport and stays there rather than being nudged to fit. A flat
+   `options` menu honours it too: it draws the button and the menu popup
+   itself now, which is all `Ui::menu_button` ever was.
+3. **Submenus.** Built on egui's own `SubMenu`, which a `menu` row that is
+   itself a `menu` is drawn with: it opens to the side on hover, keeps one
+   open at a time, and closes with the menu it hangs off. A row that opens a
+   submenu no longer closes the menu it sits in. This is also where the
+   layout bug was: a kind that places its own children is a leaf in the tree
+   its parent was solved in, so a subtree solved from it has to be given its
+   children before the first solve, not only when the pass is deep.
+4. **`shortcut`.** Built. A chord on any widget, in one spelling shared with
+   the `ui::shortcut` binding, which now takes the whole chord as one string
+   (`"cmd+shift+s"`, `"f5"`) instead of modifiers and key apart, and no
+   longer answers to both `"none"` and `""` for no modifier. The layer polls
+   every widget the scene is showing and consumes the chord, so a menu row
+   fires with its menu shut and a script polling the same chord does not see
+   it twice. `trailing` falls back to the chord in the platform's own
+   spelling, through `Context::format_shortcut`, so a row says it once.
+5. **`toast`.** Built. A root kind with `duration` in seconds and the usual
    `anchor`; each toast is a child the scene holds or a script spawns, drawn
    in a non-interactive `Area` at `Order::Foreground`, stacked along the
-   anchor's axis, faded over its last half second, freed when its time is
-   up. Time is the engine's, so a replay shows the same toasts. A binding
-   action `toast` with a `value` makes one with no script. The theme gets a
-   `[toast]` entry. egui-notify is the reference for the stacking and fade,
-   not a dependency: a toast has to wear the theme and follow the fixed step.
-6. **`dialog` on `egui::Modal`.** Replace `dialog_backdrop`'s hand-rolled
-   `Area` with `Modal`, which brings Escape closing the topmost dialog, the
-   backdrop click reported, and stacking when two are open. `on_change`
-   with `false` on close, as `window` does.
+   anchor's axis past the toasts already there, faded over its last half
+   second, and queued for freeing when its time is up, the way a script's
+   own `queue_free` is. Time is the engine's, so a replay shows the same
+   toasts. A `toast` binding action puts one up with no script, and a theme
+   that says nothing about the kind dresses it as a `panel`.
+6. **`dialog` on `egui::Modal`.** Built. The hand-rolled backdrop `Area` is
+   gone: egui dims the screen, holds the dialog above every other layer,
+   keeps the pointer out of what is behind, and says when Escape or a click
+   on the dim asked to close. A dialog closes the way a window does, by
+   `open = false` and `on_change`, and a shut one draws nothing.
 
 ### Text
 
@@ -117,12 +132,12 @@ The work, in order:
 | --- | --- | --- | --- |
 | `text_area` | a `field` over several lines, with selection, wrapping, undo and IME | `TextEdit` | built, on `egui::TextEdit` |
 | `code` | a `text_area` with the gutter, colouring and caret the editor has | `CodeEdit` | built, sharing `immediate::code` |
-| `drag_value` | a number dragged or typed, with `min`, `max`, `step` and a prefix | `SpinBox` | built, no arrows |
+| `drag_value` | a number dragged or typed, with `min`, `max`, `step`, a prefix, a `suffix` and `arrows` | `SpinBox` | built |
 | `check` + `group` | one of a named set chosen | `CheckBox` groups | built |
-| `[url]` in `markup` | a span a click reports | `RichTextLabel` `[url]`, `meta_clicked` | open |
-| `[hint]` in `markup` | a span with a tooltip | `RichTextLabel` `[hint]` | open |
-| `selectable` | a drag over a label selects, copy takes the text | `selection_enabled` | open |
-| `arrows` | up and down steps on a `drag_value` | `SpinBox` arrows | open |
+| `[url]` in `markup` | a span a click reports | `RichTextLabel` `[url]`, `meta_clicked` | built |
+| `[hint]` in `markup` | a span with a tooltip | `RichTextLabel` `[hint]` | built |
+| `selectable` | a drag over a label selects, copy takes the text | `selection_enabled` | built |
+| `arrows` | up and down steps on a `drag_value` | `SpinBox` arrows | built |
 
 `radio` and `text` from the first draft are struck: the first is `check` with
 a `group`, the second is `text_area`.
@@ -154,25 +169,28 @@ two fields and a hit-test, against losing the five points above. Keep
 
 The work, in order:
 
-1. **`[url=target]text[/url]`.** A `Tag::Link` in `balaur_text::markup`;
-   `Quad` gains `link: Option<u16>`, an index into the block's link targets,
-   the way `color` and `wave` ride on it now. The label's response hit-tests
-   the pointer against linked quads: hover draws the theme's `link` colour
-   and underline, a click calls `on_link(target)` on the node or the nearest
-   scripted ancestor, as `on_click` resolves. Opening a browser is the
-   script's `engine::open_url`, as Godot leaves it to `meta_clicked`. A
-   `label` that is one link is Godot's `LinkButton`; no kind for it.
-2. **`[hint=text]`.** The same span index, showing `text` through
-   `on_hover_text` while the pointer rests on the span.
-3. **`selectable`.** `Quad` also gains `char: u32`, the byte offset the
-   glyph starts at. A drag over a `selectable` label selects the quads
-   between the two offsets, painted in the theme's selection colour behind
-   the glyphs; Cmd or Ctrl and C copies the substring through the clipboard
-   `ui::set_clipboard` already writes. Double click selects a word, treble a
-   line.
-4. **`arrows`.** A bool on `drag_value` drawing two small buttons at its
-   trailing edge that move by `step`, clamped to `min` and `max`; `suffix`
-   beside the existing prefix, so `12 px` reads as Godot's SpinBox does.
+1. **`[url=target]text[/url]`.** Built. A `Tag::Link` in
+   `balaur_text::markup`; `Quad` carries `link: Option<u16>`, an index into
+   the block's targets, the way `color` and `wave` ride on it. The label
+   hit-tests the pointer against the linked glyphs: a link wears the theme's
+   `link` colour, or egui's, and an underline drawn a run at a time; the
+   pointer over one is a hand, and a click calls `on_link(target)` on the
+   node or the nearest scripted ancestor, as `on_click` resolves. Opening a
+   browser is the script's `engine::open_url`, as Godot leaves it to
+   `meta_clicked`. A click on the plain text beside a link reports nothing.
+2. **`[hint=text]`.** Built. The same span index, showing `text` through
+   `on_hover_text` over the span's own box while the pointer rests on it.
+3. **`selectable`.** Built. `Quad` also carries `start`, the byte offset the
+   glyph begins at, and `Shaped` the text with the marks taken off. A drag
+   over a `selectable` label selects the glyphs between the press and the
+   pointer, painted in egui's selection colour behind them; the platform's
+   copy key takes that substring through the clipboard. Double click takes a
+   word, treble the block. The selection lives in egui's memory, keyed by
+   the node: it is this screen's, not the scene's.
+4. **`arrows`.** Built. A bool on `drag_value` drawing a step up and a step
+   down at its trailing edge, each moving by `step` and clamped to `min` and
+   `max`; `suffix` follows the number as `placeholder` leads it, so `12 px`
+   reads as Godot's SpinBox does.
 
 ### Containers
 
@@ -292,11 +310,8 @@ and `egui_dnd` 0.17 all pin egui 0.36.
 
 ## 5. Open questions
 
-1. **A shortcut on a hidden menu.** Whether a row's chord fires when the
-   menu's root is `visible = false`. The editor wants yes for a command
-   palette; a game's pause menu wants no. Follow `visible`.
-2. **What a `tree` holds.** Rows handed in by a script every frame, or a
+1. **What a `tree` holds.** Rows handed in by a script every frame, or a
    model the widget owns? The editor wants the first, a game's inventory the
    second.
-3. **How far `code` goes.** Completion and diagnostics belong to the language
+2. **How far `code` goes.** Completion and diagnostics belong to the language
    server; the kind draws them without knowing what produced them.

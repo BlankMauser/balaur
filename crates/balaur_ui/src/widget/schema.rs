@@ -25,6 +25,7 @@ pub(crate) fn register_widget_component(reg: &mut Registry<'_>) {
                     (k::KIND, &format!(r#"{{ type = "enum", default = "{}", options = [{}], description = "The HUD element the widget layer draws" }}"#, w::LABEL, v::options(w::WIDGET_KINDS))),
                     (k::TEXT, r#"{ type = "string", default = "label", description = "Label or button caption" }"#),
                     (k::VISIBLE, r#"{ type = "bool", default = true, description = "Draw the widget; hidden widgets keep their state" }"#),
+                    (k::SAFE_AREA, r#"{ type = "bool", default = false, description = "Keep this root clear of what a notch, a status bar or a home bar covers. Off by default: a backdrop is meant to reach the edge and a control is not", group = "placement" }"#),
                     (k::ANCHOR, &format!(r#"{{ type = "enum", default = "{}", options = [{}], description = "Corner, edge or middle the offset is measured from: of the surface for a root, of the parent's box inside a `stack`; `fill` takes the whole of it less `inset`" }}"#, w::TOP_LEFT, v::options(w::ANCHORS))),
                     (k::X, r#"{ type = "float", default = 16.0, description = "Horizontal offset from the anchor, in design pixels", group = "placement" }"#),
                     (k::Y, r#"{ type = "float", default = 16.0, description = "Vertical offset from the anchor, in design pixels", group = "placement" }"#),
@@ -35,13 +36,22 @@ pub(crate) fn register_widget_component(reg: &mut Registry<'_>) {
                     (k::PADDING, r#"{ type = "vec4", default = [-1.0, -1.0, -1.0, -1.0], description = "Space inside a container's edge, in design pixels: one number for every side, or left, top, right and bottom. Below zero takes the theme's own, and a stated zero is no space at all", group = "layout" }"#),
                     (k::GAP, r#"{ type = "float", default = -1.0, description = "Space between a container's children, in design pixels; below zero takes the theme's own, which is 8 where it says nothing, and a stated zero puts them edge to edge", group = "layout" }"#),
                     (k::ALIGN, &format!(r#"{{ type = "enum", default = "{}", options = [{}], description = "Where a container puts its children across its own direction", group = "layout" }}"#, w::START, v::options(w::ALIGNS))),
+                    (k::AXIS, &format!(r#"{{ type = "enum", default = "{}", options = [{}], description = "Which way a scroll moves; the other way its contents fill the box it was given", group = "layout" }}"#, w::BOTH, v::options(w::AXES))),
                     (k::FOCUSABLE, r#"{ type = "bool", default = true, description = "Let focus land here. A widget nothing can activate is never focused whatever this says; set it false to skip one that could be", group = "events" }"#),
                     (k::ON_FOCUS, r#"{ type = "string", default = "", description = "Script method called when focus arrives, on this node or the nearest ancestor whose script declares it", group = "events" }"#),
                     (k::THEME, &format!(r#"{{ type = "asset", asset = "{}", default = "", description = "How this widget and everything under it is drawn; inherited from the nearest ancestor that names one", group = "paint" }}"#, crate::widget::theme::ASSET_TYPE)),
                     (k::TEXT_KEY, r#"{ type = "string", default = "", description = "A localization key drawn in place of `text`, re-read every frame so a locale switch shows at once", group = "type" }"#),
                     (k::ON_CLICK, r#"{ type = "string", default = "", description = "Script method called when the widget is clicked, on this node or the nearest ancestor whose script declares it. An `image` that names one senses clicks too, which is how a picture becomes a button", group = "events" }"#),
                     (k::CLICKED, r#"{ type = "bool", default = false, readonly = true, description = "True on the frame the button was clicked", group = "events" }"#),
+                    (k::ON_LINK, r#"{ type = "string", default = "", description = "Script method called with the target of a `[url=target]` span in `markup` text that was clicked, on this node or the nearest ancestor whose script declares it", group = "events" }"#),
+                    (k::SUFFIX, r#"{ type = "string", default = "", description = "Units drawn after a `drag_value`'s number, the way `placeholder` is drawn before it", group = "type" }"#),
+                    (k::ARROWS, r#"{ type = "bool", default = false, description = "Draw a step up and a step down beside a `drag_value`, each moving it by `step` within `min` and `max`", group = "type" }"#),
+                    (k::SELECTABLE, r#"{ type = "bool", default = false, description = "Let a drag over this label select its text, and the platform's copy key take it", group = "type" }"#),
+                    (k::CONTEXT, r#"{ type = "string", default = "", description = "Name of a `menu` node whose rows open at the pointer on a right click or a long press; give that menu `visible = false` to show no button of its own", group = "events" }"#),
                     (k::GROW, r#"{ type = "float", default = 0.0, min = 0.0, description = "Share of the leftover space a container hands out along its own direction; 0 takes only what this widget asks for", group = "placement" }"#),
+                    (k::HIDE_NARROWER, r#"{ type = "float", default = 0.0, min = 0.0, description = "Not drawn while the room is narrower than this many design pixels. The room is the nearest container that states a size or grows, and the screen for a root: a minimum in numbers, where the class words are not fine enough. Zero is no line", group = "placement" }"#),
+                    (k::HIDE_WIDER, r#"{ type = "float", default = 0.0, min = 0.0, description = "Not drawn while the room is this wide or wider, in design pixels: a control only a small space wants. Zero is no line", group = "placement" }"#),
+                    (k::HIDE_SHORTER, r#"{ type = "float", default = 0.0, min = 0.0, description = "Not drawn while the room is shorter than this many design pixels. Zero is no line", group = "placement" }"#),
                     (k::MIN_WIDTH, r#"{ type = "float", default = 0.0, min = 0.0, description = "Smallest width a container may give this widget, in design pixels", group = "placement" }"#),
                     (k::MIN_HEIGHT, r#"{ type = "float", default = 0.0, min = 0.0, description = "Smallest height a container may give this widget, in design pixels", group = "placement" }"#),
                     (k::DRAW, r#"{ type = "string", default = "", description = "What fills a `draw` widget: a script method on this node or the nearest scripted ancestor, or `scripts/file.rn:function` for a free function", group = "paint" }"#),
@@ -50,7 +60,10 @@ pub(crate) fn register_widget_component(reg: &mut Registry<'_>) {
                     (k::LAYER, r#"{ type = "string", default = "", description = "The drawing surface this root belongs to; empty is the default one, and a name nothing has configured takes the default surface", group = "placement" }"#),
                     (k::WRAP, r#"{ type = "bool", default = false, description = "Break text to the width the widget was given instead of running past it on one line", group = "type" }"#),
                     (k::TRAILING, r#"{ type = "string", default = "", description = "Text a button draws against its far edge, dimmer than its caption: a shortcut, or a menu's caret", group = "type" }"#),
+                    (k::SHORTCUT, r#"{ type = "string", default = "", description = "A chord that clicks this widget wherever it is, as `cmd+shift+s` or `f5`; a menu row fires while its menu is shut, and draws the chord against its far edge unless it says its own `trailing`", group = "events" }"#),
                     (k::SHOWING, r#"{ type = "bool", default = false, description = "Holds a menu's rows up from the scene, as a click would; for an offscreen run or a tutorial, since nothing can click there", group = "events" }"#),
+                    (k::DURATION, r#"{ type = "float", default = 3.0, min = 0.0, description = "How long a `toast` stays, in seconds, counting the half second it fades over; zero leaves it up until the game takes it away", group = "type" }"#),
+                    (k::PLACEMENT, &format!(r#"{{ type = "enum", default = "{}", options = [{}], description = "Where a `menu` opens: under its button, above it, at the pointer, or centred on the screen", group = "placement" }}"#, w::BELOW, v::options(w::PLACEMENTS))),
                     (k::KEEP_OPEN, r#"{ type = "bool", default = false, description = "A menu row that leaves its menu open when clicked, as a toggle does; any other row closes it", group = "events" }"#),
                     (k::TEXT_ALIGN, &format!(r#"{{ type = "enum", default = "{}", options = [{}], description = "Where text sits in the width the widget was given", group = "type" }}"#, w::START, v::options(w::ALIGNS))),
                     (k::SOURCE, r#"{ type = "string", default = "", description = "The project-relative image an `image` widget draws, the picture a `button` draws before its caption at the caption's height, the sheet a `list` cuts its card faces from, and the language a `code` widget highlights" }"#),
@@ -94,29 +107,109 @@ pub(crate) fn register_widget_component(reg: &mut Registry<'_>) {
             ),
             tags: &[balaur_core::components::tag::UI],
             expects: &[],
-            apply: Box::new(|eng, entity, params| {
-                crate::widget::arena::widget_changed(entity);
-                eng.world_mut()
-                    .insert_one(entity, widget_from(params))
-                    .map_err(|_| anyhow::anyhow!("node is dead"))
-            }),
-            remove: Box::new(|eng, entity| {
-                crate::widget::arena::widget_changed(entity);
-                let _ = eng.world_mut().remove_one::<Widget>(entity);
-                Ok(())
-            }),
-            get: Box::new(|eng, entity| {
-                let world = eng.world();
-                let widget = world.get::<&Widget>(entity).ok()?;
-                Some(widget_to_toml(&widget))
-            }),
+            apply: Box::new(apply_widget),
+            remove: Box::new(remove_widget),
+            get: Box::new(read_widget),
         },
     );
 }
 
-/// A `Widget` back as the property table the inspector and a script read.
-fn widget_to_toml(widget: &Widget) -> toml::Value {
+/// Refuse a key a class table invents.
+///
+/// The base table carries an unknown key in silence, because a component's
+/// params are the game's own space. A class table is not: nothing else reads
+/// it, so a typo there is a rule that would never once apply.
+fn check_class_tables(eng: &balaur_core::Engine, params: &toml::Value) -> Result<()> {
+    let registry = eng.resource::<balaur_core::components::ComponentRegistry>();
+    let registry = registry.borrow();
+    let declared = registry
+        .def("widget")
+        .and_then(|def| def.schema.as_table())
+        .ok_or_else(|| anyhow::anyhow!("widget: the component has no schema"))?;
+    for (word, table) in class_tables(params) {
+        let Some(table) = table.as_table() else {
+            anyhow::bail!("widget: `{word}` is a screen class and takes a table of properties");
+        };
+        for key in table.keys() {
+            if key == k::KIND {
+                anyhow::bail!(
+                    "widget: `{word}.{key}` -- a widget cannot change kind with the screen"
+                );
+            }
+            if !declared.contains_key(key) {
+                anyhow::bail!("widget: `{word}.{key}` is not a widget property");
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Put the widget a table describes on the node, in place of whatever it
+/// had. The arena is told, since its copy is now a frame behind.
+fn apply_widget(
+    eng: &balaur_core::Engine,
+    entity: balaur_core::hecs::Entity,
+    params: &toml::Value,
+) -> Result<()> {
+    check_class_tables(eng, params)?;
+    crate::widget::arena::widget_changed(entity);
+    eng.world_mut()
+        .insert_one(entity, widget_from(params))
+        .map_err(|_| anyhow::anyhow!("node is dead"))
+}
+
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "the shape a component's `remove` hook is registered as"
+)]
+fn remove_widget(eng: &balaur_core::Engine, entity: balaur_core::hecs::Entity) -> Result<()> {
+    crate::widget::arena::widget_changed(entity);
+    let _ = eng.world_mut().remove_one::<Widget>(entity);
+    Ok(())
+}
+
+fn read_widget(
+    eng: &balaur_core::Engine,
+    entity: balaur_core::hecs::Entity,
+) -> Option<toml::Value> {
+    let world = eng.world();
+    let widget = world.get::<&Widget>(entity).ok()?;
+    Some(widget_to_toml(&widget))
+}
+
+/// The class tables a widget was authored with, as the map every property is
+/// then written into.
+fn class_tables_of(widget: &Widget) -> toml::map::Map<String, toml::Value> {
     let mut map = toml::map::Map::new();
+    if let Some(authored) = widget.authored.as_ref() {
+        for (word, table) in class_tables(authored) {
+            map.insert(word.to_string(), table.clone());
+        }
+    }
+    map
+}
+
+/// The sizes a widget asks of the room around it: its minimums, and the
+/// surface lines it is not drawn past.
+fn write_room(map: &mut toml::map::Map<String, toml::Value>, widget: &Widget) {
+    for (key, value) in [
+        (k::MIN_WIDTH, widget.min_width),
+        (k::MIN_HEIGHT, widget.min_height),
+        (k::HIDE_NARROWER, widget.hide_narrower),
+        (k::HIDE_WIDER, widget.hide_wider),
+        (k::HIDE_SHORTER, widget.hide_shorter),
+    ] {
+        map.insert(key.into(), toml::Value::Float(f64::from(value)));
+    }
+}
+
+/// A `Widget` back as the property table the inspector and a script read.
+///
+/// The class tables come back with it: they are not properties of the widget,
+/// so nothing above would put them back, and a scene saved without them would
+/// have lost what it was authored with.
+fn widget_to_toml(widget: &Widget) -> toml::Value {
+    let mut map = class_tables_of(widget);
     map.insert(k::KIND.into(), toml::Value::String(widget.kind.to_string()));
     map.insert(k::TEXT.into(), toml::Value::String(widget.text.to_string()));
     map.insert(k::VISIBLE.into(), toml::Value::Boolean(widget.visible));
@@ -150,12 +243,14 @@ fn widget_to_toml(widget: &Widget) -> toml::Value {
         k::ON_CLICK.into(),
         toml::Value::String(widget.on_click.to_string()),
     );
+    reach_to_toml(widget, &mut map);
     map.insert(k::PADDING.into(), four(widget.padding));
     map.insert(k::GAP.into(), toml::Value::Float(f64::from(widget.gap)));
     map.insert(
         k::ALIGN.into(),
         toml::Value::String(widget.align.to_string()),
     );
+    map.insert(k::AXIS.into(), toml::Value::String(widget.axis.to_string()));
     map.insert(k::FOCUSABLE.into(), toml::Value::Boolean(widget.focusable));
     map.insert(
         k::ON_FOCUS.into(),
@@ -170,14 +265,7 @@ fn widget_to_toml(widget: &Widget) -> toml::Value {
         toml::Value::String(widget.text_key.to_string()),
     );
     map.insert(k::GROW.into(), toml::Value::Float(f64::from(widget.grow)));
-    map.insert(
-        k::MIN_WIDTH.into(),
-        toml::Value::Float(f64::from(widget.min_width)),
-    );
-    map.insert(
-        k::MIN_HEIGHT.into(),
-        toml::Value::Float(f64::from(widget.min_height)),
-    );
+    write_room(&mut map, widget);
     map.insert(k::DRAW.into(), toml::Value::String(widget.draw.to_string()));
     map.insert(
         k::HANDLE.into(),
@@ -197,11 +285,45 @@ fn widget_to_toml(widget: &Widget) -> toml::Value {
         k::TRAILING.into(),
         toml::Value::String(widget.trailing.to_string()),
     );
+    map.insert(
+        k::SHORTCUT.into(),
+        toml::Value::String(widget.shortcut.to_string()),
+    );
     map.insert(k::SHOWING.into(), toml::Value::Boolean(widget.showing));
+    map.insert(
+        k::PLACEMENT.into(),
+        toml::Value::String(widget.placement.to_string()),
+    );
+    map.insert(
+        k::DURATION.into(),
+        toml::Value::Float(f64::from(widget.duration)),
+    );
     text_to_toml(widget, &mut map);
     look_to_toml(widget, &mut map);
     controls_to_toml(widget, &mut map);
     toml::Value::Table(map)
+}
+
+/// The keys that say what a widget answers to: the menu a right click opens,
+/// the link a click reports, and what a number and a label let the player do.
+fn reach_to_toml(widget: &Widget, map: &mut toml::map::Map<String, toml::Value>) {
+    map.insert(
+        k::CONTEXT.into(),
+        toml::Value::String(widget.context.to_string()),
+    );
+    map.insert(
+        k::ON_LINK.into(),
+        toml::Value::String(widget.on_link.to_string()),
+    );
+    map.insert(
+        k::SELECTABLE.into(),
+        toml::Value::Boolean(widget.selectable),
+    );
+    map.insert(
+        k::SUFFIX.into(),
+        toml::Value::String(widget.suffix.to_string()),
+    );
+    map.insert(k::ARROWS.into(), toml::Value::Boolean(widget.arrows));
 }
 
 /// The keys a widget's text carries: where it sits, the face it is drawn in,
@@ -313,6 +435,7 @@ fn controls_to_toml(widget: &Widget, map: &mut toml::map::Map<String, toml::Valu
         k::AVOID_KEYBOARD.into(),
         toml::Value::Boolean(widget.avoid_keyboard),
     );
+    map.insert(k::SAFE_AREA.into(), toml::Value::Boolean(widget.safe_area));
     map.insert(k::SLICE.into(), four(widget.slice));
     map.insert(
         k::DEADZONE.into(),
@@ -373,6 +496,10 @@ pub(crate) fn register_widget_presets(reg: &mut Registry<'_>) -> Result<()> {
             "Children left to right, wrapping when the row is full",
         ),
         (w::FOLD, "A header that shows or hides what is under it"),
+        (
+            w::TOAST,
+            "A message that stacks at its anchor and leaves when its `duration` is up",
+        ),
         (
             w::DIALOG,
             "A panel over everything, with the screen behind it dimmed and deaf",
@@ -463,10 +590,16 @@ fn widget_from(params: &toml::Value) -> Widget {
         row_height: f(k::ROW_HEIGHT),
         font: s(k::FONT),
         on_click: s(k::ON_CLICK),
+        context: s(k::CONTEXT),
+        on_link: s(k::ON_LINK),
+        selectable: r.flag(k::SELECTABLE),
+        suffix: s(k::SUFFIX),
+        arrows: r.flag(k::ARROWS),
         clicked: false,
         padding: sides(params, k::PADDING),
         gap: f(k::GAP),
         align: s(k::ALIGN),
+        axis: s(k::AXIS),
         focusable: r.flag(k::FOCUSABLE),
         on_focus: s(k::ON_FOCUS),
         theme: s(k::THEME),
@@ -481,7 +614,10 @@ fn widget_from(params: &toml::Value) -> Widget {
         wrap: r.flag(k::WRAP),
         keep_open: r.flag(k::KEEP_OPEN),
         trailing: s(k::TRAILING),
+        shortcut: s(k::SHORTCUT),
         showing: r.flag(k::SHOWING),
+        placement: s(k::PLACEMENT),
+        duration: f(k::DURATION),
         text_align: s(k::TEXT_ALIGN),
         source: s(k::SOURCE),
         fit: s(k::FIT),
@@ -516,9 +652,60 @@ fn widget_from(params: &toml::Value) -> Widget {
         avoid_keyboard: false,
         slice: [0.0; 4],
         deadzone: 0.0,
+        safe_area: false,
+        hide_narrower: 0.0,
+        hide_wider: 0.0,
+        hide_shorter: 0.0,
+        authored: None,
     };
     read_controls(&mut widget, params);
+    if class_tables(params).next().is_some() {
+        widget.authored = Some(std::sync::Arc::new(params.clone()));
+    }
     widget
+}
+
+/// Every class table this widget carries, in the order an override applies:
+/// the input class, then the height, then the width, later winning. A phone
+/// held upright answers `touch`, `tall` and `narrow`, in that order.
+pub(crate) const CLASS_KEYS: [&str; 7] = [
+    balaur_core::tags::TOUCH,
+    balaur_core::tags::POINTER,
+    balaur_core::facts::SHORT,
+    balaur_core::facts::TALL,
+    balaur_core::facts::NARROW,
+    balaur_core::facts::MEDIUM,
+    balaur_core::facts::WIDE,
+];
+
+/// The `[nodes.widget.<class>]` tables a widget states, in `CLASS_KEYS` order.
+fn class_tables(params: &toml::Value) -> impl Iterator<Item = (&str, &toml::Value)> {
+    CLASS_KEYS.into_iter().filter_map(move |word| {
+        let table = params.get(word)?;
+        table.as_table().map(|_| (word, table))
+    })
+}
+
+/// The widget a scene authored, read again for the classes in force.
+///
+/// `None` where it carries no class table, which is almost every widget: the
+/// caller keeps the one it has rather than building a second.
+pub(crate) fn for_classes(widget: &Widget, active: &[&str]) -> Option<Widget> {
+    let authored = widget.authored.as_ref()?;
+    let base = authored.as_table()?;
+    let mut merged = base.clone();
+    let mut changed = false;
+    // Broad to narrow, so the narrowest class named wins the key.
+    for (word, table) in class_tables(authored) {
+        if !active.contains(&word) {
+            continue;
+        }
+        for (key, value) in table.as_table()? {
+            merged.insert(key.clone(), value.clone());
+            changed = true;
+        }
+    }
+    changed.then(|| widget_from(&toml::Value::Table(merged)))
 }
 
 /// The keys the control kinds read: a check's tick, a slider's range, a
@@ -549,6 +736,10 @@ fn read_controls(widget: &mut Widget, params: &toml::Value) {
     widget.open = b(k::OPEN);
     widget.inset = crate::widget::theme::four_of(params.get(k::INSET));
     widget.avoid_keyboard = b(k::AVOID_KEYBOARD);
+    widget.safe_area = b(k::SAFE_AREA);
+    widget.hide_narrower = f(k::HIDE_NARROWER);
+    widget.hide_wider = f(k::HIDE_WIDER);
+    widget.hide_shorter = f(k::HIDE_SHORTER);
     widget.slice = crate::widget::theme::four_of(params.get(k::SLICE));
     widget.deadzone = f(k::DEADZONE);
 }

@@ -36,9 +36,21 @@ pub fn add_widget(app: &App, params: &toml::Value) -> Entity {
 /// One egui pass over `run_pass` with the given input. The first pass only
 /// installs fonts and draws nothing, so callers spend one before asserting.
 pub fn pass(app: &App, ctx: &egui::Context, events: Vec<egui::Event>) -> egui::FullOutput {
+    pass_at(app, ctx, events, None)
+}
+
+/// A pass at a stated clock, for what egui times: a press held past its
+/// click length is a long touch.
+pub fn pass_at(
+    app: &App,
+    ctx: &egui::Context,
+    events: Vec<egui::Event>,
+    time: Option<f64>,
+) -> egui::FullOutput {
     let input = egui::RawInput {
         screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(640.0, 480.0))),
         events,
+        time,
         ..Default::default()
     };
     ctx.begin_pass(input);
@@ -50,15 +62,47 @@ pub fn pass(app: &App, ctx: &egui::Context, events: Vec<egui::Event>) -> egui::F
 }
 
 pub fn press(pos: egui::Pos2, pressed: bool) -> Vec<egui::Event> {
+    press_with(pos, PointerButton::Primary, pressed)
+}
+
+pub fn press_with(pos: egui::Pos2, button: PointerButton, pressed: bool) -> Vec<egui::Event> {
     vec![
         egui::Event::PointerMoved(pos),
         egui::Event::PointerButton {
             pos,
-            button: PointerButton::Primary,
+            button,
             pressed,
             modifiers: Modifiers::NONE,
         },
     ]
+}
+
+/// Draw at a UI scale, the way the windowed backend does it: egui's zoom is
+/// the only scale there is, so a design pixel stays a point whatever it is.
+pub fn set_scale(app: &App, ctx: &egui::Context, scale: f32) {
+    app.engine
+        .resource::<balaur_ui::UiConfig>()
+        .borrow_mut()
+        .scale = scale;
+    ctx.set_zoom_factor(scale);
+}
+
+/// A finger down or up: the touch event a screen sends, with the pointer
+/// press egui derives from it, as a winit backend delivers both.
+pub fn touch(pos: egui::Pos2, down: bool) -> Vec<egui::Event> {
+    let mut events = vec![egui::Event::Touch {
+        device_id: egui::TouchDeviceId(0),
+        id: egui::TouchId(0),
+        phase: if down {
+            egui::TouchPhase::Start
+        } else {
+            egui::TouchPhase::End
+        },
+        pos,
+        force: None,
+    }];
+    events.extend(press(pos, down));
+    events
 }
 
 /// The tick that consumes what the last pass saw.
@@ -147,4 +191,28 @@ pub fn menu(app: &App) -> (Entity, Vec<Entity>) {
         })
         .collect();
     (column, buttons)
+}
+
+pub fn property(app: &App, entity: Entity, key: &str) -> toml::Value {
+    balaur::components::get(&app.engine, entity, "widget")
+        .expect("the widget component is still on the node")
+        .get(key)
+        .cloned()
+        .unwrap_or_else(|| panic!("the widget has no `{key}`"))
+}
+
+/// Every text shape's caption and top-left corner, for finding a child.
+pub fn texts(out: &egui::FullOutput) -> Vec<(String, egui::Pos2)> {
+    out.shapes
+        .iter()
+        .filter_map(|shape| match &shape.shape {
+            egui::epaint::Shape::Text(text) => Some((text.galley.text().to_string(), text.pos)),
+            _ => None,
+        })
+        .collect()
+}
+
+pub fn root_rect(ctx: &egui::Context, entity: Entity) -> egui::Rect {
+    ctx.memory(|m| m.area_rect(egui::Id::new(("balaur-widget", entity))))
+        .expect("the root drew")
 }

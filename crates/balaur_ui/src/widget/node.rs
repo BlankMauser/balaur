@@ -47,6 +47,18 @@ pub struct Widget {
     /// Empty means nothing is connected. A name rather than a function value:
     /// scene files cannot hold closures, and a name works on any backend.
     pub on_click: SmolStr,
+    /// Name of a `menu` node whose rows open at the pointer on a secondary
+    /// click or a long touch. Empty means none.
+    pub context: SmolStr,
+    /// Method called with the target of a `[url]` span that was clicked.
+    pub on_link: SmolStr,
+    /// Whether a drag over this label selects its text.
+    pub selectable: bool,
+    /// Units drawn after a `drag_value`'s number, as `placeholder` is drawn
+    /// before it.
+    pub suffix: SmolStr,
+    /// Whether a `drag_value` draws a step up and a step down beside itself.
+    pub arrows: bool,
     pub clicked: bool,
     /// Space inside a container's edge, in design pixels.
     /// Space inside a container's edge: left, top, right and bottom, in
@@ -56,6 +68,9 @@ pub struct Widget {
     pub gap: f32,
     /// Cross-axis placement of a container's children.
     pub align: SmolStr,
+    /// Which way a `scroll` moves: `horizontal`, `vertical`, or both where it
+    /// says nothing. The other way, its contents fill the box it was given.
+    pub axis: SmolStr,
     /// Whether focus may land here, for a widget that could take it.
     pub focusable: bool,
     /// Method on this node's script, called when focus arrives.
@@ -68,6 +83,13 @@ pub struct Widget {
     /// what `width`/`height` or the content asks for.
     pub grow: f32,
     /// The author's floor, whatever the content measures.
+    /// The surface widths and height, in design pixels, this widget is not
+    /// drawn at: a number where the class words are not fine enough, and the
+    /// room a game's HUD has rather than the room a container gave. Zero is
+    /// no line.
+    pub hide_narrower: f32,
+    pub hide_wider: f32,
+    pub hide_shorter: f32,
     pub min_width: f32,
     pub min_height: f32,
     /// What fills a `draw` widget's rect: a method on this node's script or
@@ -89,8 +111,16 @@ pub struct Widget {
     pub keep_open: bool,
     /// Text against a button's far edge: a shortcut, or a menu's caret.
     pub trailing: SmolStr,
+    /// A chord that clicks this widget from anywhere, as `cmd+shift+s`.
+    pub shortcut: SmolStr,
     /// A menu held open by the scene rather than by a click.
     pub showing: bool,
+    /// Where a menu opens: under its button, above it, at the pointer, or
+    /// centred on the screen.
+    pub placement: SmolStr,
+    /// How long a `toast` stays, in seconds; zero or less stays until the
+    /// game takes it away.
+    pub duration: f32,
 
     /// Where text sits in the width the widget was given.
     pub text_align: SmolStr,
@@ -177,6 +207,12 @@ pub struct Widget {
     pub justify: SmolStr,
     /// The air either side of a caption; below zero takes the theme's.
     pub padding_x: f32,
+    /// Keep a root clear of what a notch or a home bar covers.
+    pub safe_area: bool,
+    /// The widget as it was authored, kept only when it carries a class
+    /// table, so a rotation can resolve it again. `None` is the common case
+    /// and costs nothing.
+    pub(crate) authored: Option<std::sync::Arc<toml::Value>>,
 }
 
 /// Whether this kind lays its widget children out rather than ignoring them.
@@ -198,6 +234,7 @@ pub(crate) fn lays_out(kind: &str) -> bool {
             | w::DIALOG
             | w::WINDOW
             | w::MENU
+            | w::TOAST
     )
 }
 

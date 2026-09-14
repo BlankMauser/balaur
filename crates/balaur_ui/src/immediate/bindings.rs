@@ -8,9 +8,9 @@ use balaur_core::Engine;
 use balaur_script::{Bindings, BindingsExt, CallbackId, Value};
 use egui::{Align2, Color32, FontId, Rect, Sense, Stroke, StrokeKind, pos2, vec2};
 
-use crate::bridge::{scale, scoped, with_ctx, with_ui};
+use crate::bridge::{scoped, with_ctx, with_ui};
 use crate::immediate::code::code_editor;
-use crate::immediate::{Opts, panel_frame, pill_radius, sc, text, text_field};
+use crate::immediate::{Opts, panel_frame, pill_radius, text, text_field};
 use crate::theme::{self, parse_hex};
 use crate::vocabulary::{keys as k, words as w};
 use crate::{UiConfig, UiState};
@@ -126,7 +126,7 @@ pub(crate) fn install_panels(m: &mut dyn Bindings<Engine>) {
                         let shown = panel.show(parent, |ui| {
                             result = scoped(eng, ui, cb);
                         });
-                        result.map(|()| f64::from(shown.response.rect.$span() / scale()))
+                        result.map(|()| f64::from(shown.response.rect.$span()))
                     })
                 },
             );
@@ -368,7 +368,7 @@ pub(crate) fn install_code(m: &mut dyn Bindings<Engine>) {
                 let galley = ui.painter().layout_job(job);
                 let y = rect.center().y - galley.size().y / 2.0;
                 ui.painter().galley(
-                    pos2(rect.min.x + gutter_w + sc(12.0), y),
+                    pos2(rect.min.x + gutter_w + 12.0, y),
                     galley,
                     Color32::WHITE,
                 );
@@ -459,7 +459,7 @@ pub(crate) fn install_modal(m: &mut dyn Bindings<Engine>) {
                     .fade_in(false)
                     .show(ctx, |ui| {
                         let mut frame = egui::Frame::new()
-                            .corner_radius(pill_radius(sc(32.0)))
+                            .corner_radius(pill_radius(32.0))
                             .fill(opts.color(k::FILL, Color32::from_rgb(0x20, 0x24, 0x2a)));
                         if let Some(stroke) = opts.opt_color(k::STROKE) {
                             frame = frame.stroke(Stroke::new(1.0, stroke));
@@ -471,7 +471,7 @@ pub(crate) fn install_modal(m: &mut dyn Bindings<Engine>) {
                             // ceiling.
                             let height = opts.px(k::HEIGHT, 0.0);
                             if height > 0.0 {
-                                ui.set_min_height(height.min(screen.height() - top - sc(32.0)));
+                                ui.set_min_height(height.min(screen.height() - top - 32.0));
                             }
                             result = scoped(eng, ui, cb);
                         });
@@ -561,16 +561,15 @@ pub(crate) fn install_widget_layer(m: &mut dyn Bindings<Engine>) {
         m.function(
             "widget_rect",
             |_eng: &Engine, node: balaur_script::NodeId| {
-                let scale = scale();
                 Ok(
                     crate::widget::arrange::drawn_at(balaur_core::entity_of(node)?).map_or(
                         Value::Nil,
                         |r| {
                             Value::Map(vec![
-                                (k::X.into(), Value::Num(f64::from(r.min.x / scale))),
-                                (k::Y.into(), Value::Num(f64::from(r.min.y / scale))),
-                                (k::W.into(), Value::Num(f64::from(r.width() / scale))),
-                                (k::H.into(), Value::Num(f64::from(r.height() / scale))),
+                                (k::X.into(), Value::Num(f64::from(r.min.x))),
+                                (k::Y.into(), Value::Num(f64::from(r.min.y))),
+                                (k::W.into(), Value::Num(f64::from(r.width()))),
+                                (k::H.into(), Value::Num(f64::from(r.height()))),
                             ])
                         },
                     ),
@@ -665,6 +664,38 @@ fn install_focus(m: &mut dyn Bindings<Engine>) {
     }
 }
 
+/// `ui.*` bindings: the screen classes.
+pub(crate) fn install_classes(m: &mut dyn Bindings<Engine>) {
+    m.describe(&[
+        (
+            "width_class",
+            &[],
+            "",
+            "How much width this screen has, as `ui::NARROW`, `ui::MEDIUM` or `ui::WIDE`. Read every frame: a rotation changes it. A run with no window answers `ui::WIDE`.",
+        ),
+        (
+            "height_class",
+            &[],
+            "",
+            "How much height this screen has, as `ui::SHORT` or `ui::TALL`.",
+        ),
+    ]);
+    m.function("width_class", |eng: &Engine, ()| {
+        let facts = balaur_core::facts::device(eng);
+        Ok(balaur_core::facts::width_class(
+            facts.design_size()[0],
+            crate::class_lines(eng),
+        ))
+    });
+    m.function("height_class", |eng: &Engine, ()| {
+        let facts = balaur_core::facts::device(eng);
+        Ok(balaur_core::facts::height_class(
+            facts.design_size()[1],
+            crate::class_lines(eng),
+        ))
+    });
+}
+
 /// `ui.*` bindings: scale.
 pub(crate) fn install_scale(m: &mut dyn Bindings<Engine>) {
     m.describe(&[
@@ -672,13 +703,13 @@ pub(crate) fn install_scale(m: &mut dyn Bindings<Engine>) {
             "scale",
             &[],
             "",
-            "The global UI scale: real pixels per design pixel.",
+            "The global UI scale: how many screen pixels a design pixel is drawn at, on top of the display's own.",
         ),
         (
             "set_scale",
             &[],
             "",
-            "Set the global UI scale, clamped to between 0.25 and 3.0 real pixels per design pixel; a design resolution is `screen_size` divided by it.",
+            "Set the global UI scale, clamped to between 0.25 and 3.0. It is egui's zoom factor, so it grows every control and every font; `screen_size` already answers in the design pixels it leaves.",
         ),
     ]);
     m.function("scale", |eng: &Engine, ()| {
@@ -688,7 +719,9 @@ pub(crate) fn install_scale(m: &mut dyn Bindings<Engine>) {
     });
     m.function("set_scale", |eng: &Engine, f: f32| {
         let config = eng.resource::<UiConfig>();
-        config.borrow_mut().scale = f.clamp(0.25, 3.0);
+        let mut config = config.borrow_mut();
+        config.scale = f.clamp(0.25, 3.0);
+        config.asked = true;
         Ok(())
     });
 }
@@ -706,12 +739,10 @@ pub(crate) fn install_code_editor(m: &mut dyn Bindings<Engine>) {
             |eng: &Engine, (id, source, opts): (String, String, Option<Value>)| {
                 let opts = Opts::with_roles(opts);
                 let (text, changed, clicked, caret) = code_editor(eng, &id, &source, &opts)?;
-                // Design pixels, like every other rect a script is handed.
-                let scale = scale();
                 let caret = caret.map_or(Value::Nil, |c| {
                     Value::Map(vec![
-                        (k::X.into(), Value::Num(f64::from(c.x / scale))),
-                        (k::Y.into(), Value::Num(f64::from(c.y / scale))),
+                        (k::X.into(), Value::Num(f64::from(c.x))),
+                        (k::Y.into(), Value::Num(f64::from(c.y))),
                         (
                             k::INDEX.into(),
                             Value::Int(i64::try_from(c.index).unwrap_or(i64::MAX)),
@@ -752,13 +783,13 @@ pub(crate) fn install_dropdown_select(m: &mut dyn Bindings<Engine>) {
                 let mut selected = current.clone();
                 ui.scope(|ui| {
                     // Pill-shaped shell and menu items for this widget only.
-                    let radius = pill_radius(sc(5.0) * 2.0);
+                    let radius = pill_radius(5.0 * 2.0);
                     let visuals = &mut ui.style_mut().visuals;
                     visuals.widgets.inactive.corner_radius = radius;
                     visuals.widgets.hovered.corner_radius = radius;
                     visuals.widgets.active.corner_radius = radius;
                     visuals.widgets.open.corner_radius = radius;
-                    ui.spacing_mut().button_padding = vec2(sc(11.0), sc(6.0));
+                    ui.spacing_mut().button_padding = vec2(11.0, 6.0);
                     egui::ComboBox::from_id_salt(id)
                         .width(w)
                         .selected_text(
@@ -815,7 +846,7 @@ pub(crate) fn install_images(m: &mut dyn Bindings<Engine>) {
     m.function("cursor_y", |_eng: &Engine, (): ()| {
         with_ui(|ui| {
             let top = ui.max_rect().min.y;
-            Ok(f64::from((ui.cursor().min.y - top) / scale()))
+            Ok(f64::from(ui.cursor().min.y - top))
         })
     });
     // An outline rectangle painted at (x, y, w, h) in design px relative to
@@ -826,10 +857,7 @@ pub(crate) fn install_images(m: &mut dyn Bindings<Engine>) {
             let opts = Opts::with_roles(opts);
             with_ui(|ui| {
                 let origin = ui.max_rect().min;
-                let rect = Rect::from_min_size(
-                    pos2(origin.x + sc(x), origin.y + sc(y)),
-                    vec2(sc(w), sc(h)),
-                );
+                let rect = Rect::from_min_size(pos2(origin.x + x, origin.y + y), vec2(w, h));
                 let stroke = Stroke::new(
                     opts.f32(k::WIDTH, 1.5),
                     opts.color(k::COLOR, Color32::from_rgb(0xd5, 0x81, 0x4e)),
@@ -844,7 +872,7 @@ pub(crate) fn install_images(m: &mut dyn Bindings<Engine>) {
                     ];
                     for pair in corners.windows(2) {
                         ui.painter()
-                            .add(egui::Shape::dashed_line(pair, stroke, sc(6.0), sc(5.0)));
+                            .add(egui::Shape::dashed_line(pair, stroke, 6.0, 5.0));
                     }
                 } else {
                     ui.painter()
@@ -863,20 +891,20 @@ pub(crate) fn install_queries(m: &mut dyn Bindings<Engine>) {
         ("available_height", &[], "", "The height left in the current container, in design pixels."),
         ("central_rect", &[], "", "The x, y, width and height of the surface being drawn into, in design pixels."),
         ("screen_size", &[], "", "The window's width and height, in design pixels."),
-        ("shortcut", &[], "", "Whether this chord was pressed this frame, consuming it; `mods` is `\"cmd+shift\"`, from the `MOD_*` constants. `cmd` is the platform's command key: Command on a Mac, Control everywhere else."),
+        ("shortcut", &[], "", "Whether this chord was pressed this frame, consuming it: modifiers and a key joined by `+`, as in `\"cmd+shift+s\"` or `\"f5\"`. `cmd` is the platform's command key, Command on a Mac and Control everywhere else."),
         ("set_clipboard", &[], "", "Copy text to the system clipboard."),
         ("clipboard", &[], "", "The text pasted this frame, empty otherwise: the platform clipboard is not readable on demand."),
         ("color", &[], "", "Draw a colour picker over `value`, an `[r, g, b, a]` of unit floats; returns the colour and whether it changed."),
         ("wants_keyboard", &[], "", "Whether a UI widget holds keyboard focus, so the game should leave this frame's key presses alone."),
         ("wants_pointer", &[], "", "Whether a UI widget took this frame's pointer or finger, so the game should leave it alone: what stops a tap on a HUD button also firing the shot behind it. False without a window."),
     ]);
-    // Queries return design pixels (real points divided by the UI scale), so
-    // scripts compute layout in one consistent unit.
+    // Queries return design pixels, which egui's zoom makes the unit of the
+    // whole pass, so scripts compute layout in one consistent unit.
     m.function("available_width", |_eng: &Engine, ()| {
-        with_ui(|ui| Ok(ui.available_width() / scale()))
+        with_ui(|ui| Ok(ui.available_width()))
     });
     m.function("available_height", |_eng: &Engine, ()| {
-        with_ui(|ui| Ok(ui.available_height() / scale()))
+        with_ui(|ui| Ok(ui.available_height()))
     });
     // The rect of the surface being drawn into, in design px. Called inside
     // `central_panel` it is the hole the panels left, which the alternative
@@ -884,46 +912,29 @@ pub(crate) fn install_queries(m: &mut dyn Bindings<Engine>) {
     m.function("central_rect", |_eng: &Engine, ()| {
         with_ui(|ui| {
             let rect = ui.max_rect();
-            let scale = scale();
-            Ok((
-                rect.min.x / scale,
-                rect.min.y / scale,
-                rect.width() / scale,
-                rect.height() / scale,
-            ))
+            Ok((rect.min.x, rect.min.y, rect.width(), rect.height()))
         })
     });
-    m.function("screen_size", |_eng: &Engine, ()| {
+    m.function("screen_size", |eng: &Engine, ()| {
+        // The backend publishes the screen before the tick, and the tick runs
+        // before the first pass: until then egui's viewport is a placeholder.
+        let [w, h] = balaur_core::facts::device(eng).design_size();
+        if w > 0.0 && h > 0.0 {
+            return Ok((w, h));
+        }
         with_ctx(|ctx| {
             let rect = ctx.viewport_rect();
-            Ok((rect.width() / scale(), rect.height() / scale()))
+            Ok((rect.width(), rect.height()))
         })
     });
-    m.function(
-        "shortcut",
-        |_eng: &Engine, (mods, key): (String, String)| {
-            with_ctx(|ctx| {
-                let Some(key) = egui::Key::from_name(&key) else {
-                    return Ok(false);
-                };
-                // "shift+cmd" is one chord, not an unknown name: an unrecognised
-                // string used to silently become the unmodified key.
-                let mut modifiers = egui::Modifiers::NONE;
-                for part in mods.split('+') {
-                    modifiers |= match part.trim() {
-                        // egui's own rule: the platform's command key, which
-                        // is Command on a Mac and Control everywhere else.
-                        w::CMD => egui::Modifiers::COMMAND,
-                        w::CTRL => egui::Modifiers::CTRL,
-                        w::ALT => egui::Modifiers::ALT,
-                        w::SHIFT => egui::Modifiers::SHIFT,
-                        _ => egui::Modifiers::NONE,
-                    };
-                }
-                Ok(ctx.input_mut(|i| i.consume_key(modifiers, key)))
-            })
-        },
-    );
+    m.function("shortcut", |_eng: &Engine, chord: String| {
+        with_ctx(|ctx| {
+            let Some((modifiers, key)) = crate::immediate::chord(&chord) else {
+                return Ok(false);
+            };
+            Ok(ctx.input_mut(|i| i.consume_key(modifiers, key)))
+        })
+    });
     install_clipboard_and_color(m);
 }
 
@@ -1000,7 +1011,7 @@ fn install_toggle_and_slider(m: &mut dyn Bindings<Engine>) {
             with_ui(|ui| {
                 // Sized from the theme: a switch as tall as its row, not a
                 // slab that dwarfs the fields beside it.
-                let h = opts.px(k::HEIGHT, sc(18.0) / scale());
+                let h = opts.px(k::HEIGHT, 18.0);
                 let (rect, response) = ui.allocate_exact_size(vec2(h * 1.75, h), Sense::click());
                 let on = if response.clicked() { !on } else { on };
                 let track = if on {
@@ -1040,7 +1051,7 @@ fn install_toggle_and_slider(m: &mut dyn Bindings<Engine>) {
                     }
                 };
                 let (rect, response) =
-                    ui.allocate_exact_size(vec2(w, sc(28.0)), Sense::click_and_drag());
+                    ui.allocate_exact_size(vec2(w, 28.0), Sense::click_and_drag());
                 let mut value = value;
                 if (response.dragged() || response.clicked())
                     && let Some(pos) = response.interact_pointer_pos()
@@ -1054,8 +1065,8 @@ fn install_toggle_and_slider(m: &mut dyn Bindings<Engine>) {
                     0.0
                 };
                 let rail = Rect::from_min_max(
-                    pos2(rect.min.x, rect.center().y - sc(2.5)),
-                    pos2(rect.max.x, rect.center().y + sc(2.5)),
+                    pos2(rect.min.x, rect.center().y - 2.5),
+                    pos2(rect.max.x, rect.center().y + 2.5),
                 );
                 ui.painter().rect_filled(
                     rail,
@@ -1071,12 +1082,12 @@ fn install_toggle_and_slider(m: &mut dyn Bindings<Engine>) {
                 let knob_x = rect.width().mul_add(t, rect.min.x);
                 ui.painter().circle_filled(
                     pos2(knob_x, rect.center().y),
-                    sc(6.5),
+                    6.5,
                     opts.color(k::KNOB, Color32::from_rgb(0x17, 0x19, 0x1c)),
                 );
                 ui.painter().circle_stroke(
                     pos2(knob_x, rect.center().y),
-                    sc(6.5),
+                    6.5,
                     Stroke::new(2.0, accent),
                 );
                 Ok((value, response.dragged() || response.clicked()))
@@ -1124,7 +1135,7 @@ fn install_drag_value(m: &mut dyn Bindings<Engine>) {
                 let corner = if radius > 0.0 {
                     pill_radius(radius * 2.0)
                 } else {
-                    pill_radius(sc(5.0) * 2.0)
+                    pill_radius(5.0 * 2.0)
                 };
                 ui.painter().rect(
                     rect,
@@ -1139,7 +1150,7 @@ fn install_drag_value(m: &mut dyn Bindings<Engine>) {
                 // Tight: three of these are one row of a vector, and the gap
                 // the label used to keep pushed the value out of its own cell.
                 let size = opts.px(k::SIZE, 12.0);
-                let mut x = rect.min.x + sc(5.0);
+                let mut x = rect.min.x + 5.0;
                 if let Some(prefix) = opts.string(k::PREFIX) {
                     let color = opts.color(k::PREFIX_COLOR, Color32::from_rgb(0xf0, 0xa2, 0x73));
                     let galley = ui.painter().layout_no_wrap(
@@ -1148,7 +1159,7 @@ fn install_drag_value(m: &mut dyn Bindings<Engine>) {
                         color,
                     );
                     let y = rect.center().y - galley.size().y / 2.0;
-                    let advance = galley.size().x + sc(4.0);
+                    let advance = galley.size().x + 4.0;
                     ui.painter().galley(pos2(x, y), galley, color);
                     x += advance;
                 }

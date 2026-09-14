@@ -27,6 +27,11 @@ pub(crate) struct Placed {
     /// says nothing itself.
     pub(crate) name: SmolStr,
     pub(crate) widget: Widget,
+    /// What the widget itself said about being drawn, before the scene tree
+    /// had its say. Held because `widget.visible` is folded with the node's
+    /// own appearance every pass, and re-reading the world for it would read
+    /// the widget as authored rather than as this screen class resolved it.
+    pub(crate) authored_visible: bool,
     pub(crate) children: Vec<usize>,
     /// The look resolved for this widget, worked out once a frame.
     ///
@@ -45,6 +50,23 @@ pub(crate) struct Look {
     pub(crate) style: Rc<Style>,
     pub(crate) font: egui::FontId,
     pub(crate) ink: Color32,
+}
+
+/// Whether the surface is on the side of every line the widget draws. A
+/// surface of nothing is a headless run, which draws everything as authored.
+fn fits(widget: &Widget, width: f32, height: f32) -> bool {
+    if width <= 0.0 || height <= 0.0 {
+        return true;
+    }
+    (widget.hide_narrower <= 0.0 || width >= widget.hide_narrower)
+        && (widget.hide_wider <= 0.0 || width < widget.hide_wider)
+        && (widget.hide_shorter <= 0.0 || height >= widget.hide_shorter)
+}
+
+/// One widget as this pass sees it: what the scene authored, with any class
+/// table the screen answers to folded over it.
+fn for_classes(widget: &Widget, classes: &[&str]) -> Widget {
+    crate::widget::schema::for_classes(widget, classes).unwrap_or_else(|| Widget::clone(widget))
 }
 
 /// The theme in force at one node, folded down its ancestors.
@@ -71,13 +93,13 @@ pub(crate) fn theme_at(
 }
 
 /// The look of one widget, resolved once and kept for the rest of the frame.
-pub(crate) fn look_of(arena: &[Placed], index: usize, theme: &WidgetTheme, scale: f32) -> Rc<Look> {
+pub(crate) fn look_of(arena: &[Placed], index: usize, theme: &WidgetTheme) -> Rc<Look> {
     let placed = &arena[index];
     if let Some(held) = placed.look.borrow().as_ref() {
         return Rc::clone(held);
     }
     let style = styled(theme, &placed.widget);
-    let (ink, font) = face(theme, &style, &placed.widget, scale);
+    let (ink, font) = face(theme, &style, &placed.widget);
     let made = Rc::new(Look { style, font, ink });
     *placed.look.borrow_mut() = Some(Rc::clone(&made));
     made
@@ -95,6 +117,9 @@ thread_local! {
     /// The tree's appearance revision last pass drew at: when it moves, a
     /// node was hidden or shown and every widget's visibility is re-read.
     static SEEN: std::cell::Cell<u64> = const { std::cell::Cell::new(u64::MAX) };
+    /// The surface the last pass read visibility against, in whole design
+    /// pixels: when it moves, every widget with a line is re-read.
+    static SURFACE: std::cell::Cell<(i32, i32)> = const { std::cell::Cell::new((-1, -1)) };
 }
 
 #[derive(Default)]
@@ -126,7 +151,46 @@ pub(crate) fn stamp_now(eng: &Engine) -> (u64, u64) {
     // without any component being written.
     let mut hasher = rustc_hash::FxHasher::default();
     balaur_core::strings::locale(eng).hash(&mut hasher);
+    // A rotation is the same shape of change: every class table resolves
+    // again, and no component was written to say so.
+    pass_classes().hash(&mut hasher);
     (balaur_core::scene::shape_revision(), hasher.finish())
+}
+
+thread_local! {
+    /// The classes this pass answers to, read once at its start.
+    static CLASSES: std::cell::Cell<[&'static str; 3]> = const {
+        std::cell::Cell::new([balaur_core::tags::POINTER, balaur_core::facts::TALL, balaur_core::facts::WIDE])
+    };
+}
+
+/// Read the screen once for the pass; everything after reads this.
+pub(crate) fn begin_classes(eng: &Engine) -> [&'static str; 3] {
+    let now = read_classes(eng);
+    CLASSES.with(|held| held.set(now));
+    now
+}
+
+/// The classes the pass began with.
+pub(crate) fn pass_classes() -> [&'static str; 3] {
+    CLASSES.with(std::cell::Cell::get)
+}
+
+/// The class words a widget's tables are resolved against this pass, in the
+/// order they override: the input class, then the height, then the width.
+///
+/// Measured against the game's own area rather than the window, so a game
+/// played in a small viewport lays out as the viewport, not as the editor
+/// around it.
+pub(crate) fn read_classes(eng: &Engine) -> [&'static str; 3] {
+    let facts = balaur_core::facts::device(eng);
+    let [width, height] = facts.design_game_size();
+    let lines = crate::class_lines(eng);
+    [
+        balaur_core::tags::input_class(balaur_core::facts::platform(eng).touchscreen),
+        balaur_core::facts::height_class(height, lines),
+        balaur_core::facts::width_class(width, lines),
+    ]
 }
 
 /// The arena kept from last pass, when nothing has changed since.
@@ -177,6 +241,7 @@ fn patch(
     arena: &mut [Placed],
     index_of: &rustc_hash::FxHashMap<u64, usize>,
     dirty: &rustc_hash::FxHashSet<u64>,
+    classes: &[&str],
 ) -> Option<Vec<usize>> {
     let world = eng.world();
     let mut touched = Vec::with_capacity(dirty.len());
@@ -186,7 +251,9 @@ fn patch(
         // Gone from the world, or its component removed: either way the shape
         // of the forest is not what the arena says it is.
         let widget = world.get::<&Widget>(entity).ok()?;
-        arena[index].widget = Widget::clone(&widget);
+        let widget = for_classes(&widget, classes);
+        arena[index].authored_visible = widget.visible;
+        arena[index].widget = widget;
         touched.push(index);
     }
     Some(touched)
@@ -203,6 +270,7 @@ fn forest(
     mut arena: Vec<Placed>,
     mut roots: Vec<usize>,
     mut index_of: rustc_hash::FxHashMap<u64, usize>,
+    classes: &[&str],
 ) -> Arena {
     use balaur_core::scene::Children;
     let world = eng.world();
@@ -217,7 +285,7 @@ fn forest(
         let mut next_owner = owner;
         if let Ok(widget) = world.get::<&Widget>(entity) {
             let index = arena.len();
-            let widget = Widget::clone(&widget);
+            let widget = for_classes(&widget, classes);
             let name = world
                 .get::<&balaur_core::scene::Name>(entity)
                 .map_or_else(|_| SmolStr::default(), |n| SmolStr::new(&n.0));
@@ -229,6 +297,7 @@ fn forest(
                 entity,
                 parent: owner,
                 name,
+                authored_visible: widget.visible,
                 widget,
                 children: Vec::new(),
                 look: RefCell::new(None),
@@ -268,6 +337,9 @@ pub(crate) struct Begun {
 /// arena is this pass's.
 pub(crate) fn begin(eng: &Engine, stamp: (u64, u64)) -> Begun {
     let written = DIRTY.with(|d| std::mem::take(&mut *d.borrow_mut()));
+    // What the pass began with, so a widget re-read here resolves against the
+    // same words the stamp and the kept arena did.
+    let classes = pass_classes();
     let mut fresh = true;
     let mut touched = Vec::new();
     let (mut placed, roots, index_of) = match kept(stamp) {
@@ -275,17 +347,17 @@ pub(crate) fn begin(eng: &Engine, stamp: (u64, u64)) -> Begun {
             match if written.is_empty() {
                 Some(Vec::new())
             } else {
-                patch(eng, &mut arena, &index_of, &written)
+                patch(eng, &mut arena, &index_of, &written, &classes)
             } {
                 Some(patched) => {
                     fresh = false;
                     touched = patched;
                     (arena, roots, index_of)
                 }
-                None => forest(eng, arena, roots, index_of),
+                None => forest(eng, arena, roots, index_of, &classes),
             }
         }
-        Err((arena, roots, index_of)) => forest(eng, arena, roots, index_of),
+        Err((arena, roots, index_of)) => forest(eng, arena, roots, index_of, &classes),
     };
     shown_by_tree(eng, &mut placed, fresh, &mut touched);
     if !fresh {
@@ -315,10 +387,27 @@ pub(crate) fn begin(eng: &Engine, stamp: (u64, u64)) -> Begun {
 fn shown_by_tree(eng: &Engine, placed: &mut [Placed], fresh: bool, touched: &mut Vec<usize>) {
     let revision = balaur_core::scene::appearance_revision();
     let moved = SEEN.with(|seen| seen.replace(revision)) != revision;
+    let [width, height] = balaur_core::facts::device(eng).design_game_size();
+    let surface = (width as i32, height as i32);
+    let resized = SURFACE.with(|seen| seen.replace(surface)) != surface;
     let reread = touched.clone();
+    // Each widget with a line, against the room it is laid out in: the
+    // nearest container that states a size or grows, where that container
+    // drew last pass, or the screen for a root and where none does.
+    let roomed: Vec<bool> = placed
+        .iter()
+        .enumerate()
+        .map(|(index, one)| {
+            if !has_lines(&one.widget) {
+                return true;
+            }
+            let [w, h] = room_of(placed, index, [width, height]);
+            fits(&one.widget, w, h)
+        })
+        .collect();
     let world = eng.world();
     let mut fold = |index: usize, one: &mut Placed| {
-        let authored = world.get::<&Widget>(one.entity).map_or(true, |w| w.visible);
+        let authored = one.authored_visible && roomed[index];
         let (shown, alpha) = world
             .get::<&balaur_core::GlobalAppearance>(one.entity)
             .map_or((true, 1.0), |a| (a.visible, a.tint.w.clamp(0.0, 1.0)));
@@ -333,15 +422,43 @@ fn shown_by_tree(eng: &Engine, placed: &mut [Placed], fresh: bool, touched: &mut
             }
         }
     };
-    if fresh || moved {
+    if fresh || moved || resized {
         for (index, one) in placed.iter_mut().enumerate() {
             fold(index, one);
         }
     } else {
-        for index in reread {
-            if let Some(one) = placed.get_mut(index) {
+        for index in &reread {
+            if let Some(one) = placed.get_mut(*index) {
+                fold(*index, one);
+            }
+        }
+        // A container can change size without the screen doing so, as a dock
+        // drag does, so a widget with a line is asked every pass.
+        for (index, one) in placed.iter_mut().enumerate() {
+            if has_lines(&one.widget) && !reread.contains(&index) {
                 fold(index, one);
             }
         }
     }
+}
+
+fn has_lines(widget: &Widget) -> bool {
+    widget.hide_narrower > 0.0 || widget.hide_wider > 0.0 || widget.hide_shorter > 0.0
+}
+
+/// The room a widget's lines are read against, in design pixels.
+fn room_of(placed: &[Placed], index: usize, surface: [f32; 2]) -> [f32; 2] {
+    let mut up = placed[index].parent;
+    while let Some(at) = up {
+        let one = &placed[at];
+        let w = &one.widget;
+        // A root that states a size is a room like any other; one that hugs
+        // its contents is the screen's, and so is a line above every root.
+        if w.width > 0.0 || w.height > 0.0 || (w.grow > 0.0 && one.parent.is_some()) {
+            return crate::widget::arrange::drawn_at(one.entity)
+                .map_or(surface, |rect| [rect.width(), rect.height()]);
+        }
+        up = one.parent;
+    }
+    surface
 }

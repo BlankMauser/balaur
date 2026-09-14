@@ -56,12 +56,12 @@ fn keyboard_move(ctx: &egui::Context) -> Option<Move> {
     })
 }
 
-/// Where focus may land, in the order the draw will reach them.
+/// Every widget the scene is showing, in the order the draw reaches them.
 ///
 /// Walked from the roots rather than read off the arena: a button under a
 /// hidden panel or on a surface the host turned off is never drawn, and an
 /// `accept` on it would fire an `on_click` nobody could have seen to ask for.
-fn focus_stops(placed: &[Placed], roots: &[usize], on: &dyn Fn(&str) -> bool) -> Vec<Entity> {
+fn reachable(placed: &[Placed], roots: &[usize], on: &dyn Fn(&str) -> bool) -> Vec<usize> {
     let mut stops = Vec::new();
     let mut stack: Vec<usize> = roots
         .iter()
@@ -74,13 +74,40 @@ fn focus_stops(placed: &[Placed], roots: &[usize], on: &dyn Fn(&str) -> bool) ->
         if !one.widget.visible {
             continue;
         }
-        if takes_focus(&one.widget) {
-            stops.push(one.entity);
-        }
+        stops.push(index);
         // Reversed, so the stack pops them in declaration order.
         stack.extend(one.children.iter().rev().copied());
     }
     stops
+}
+
+/// Where focus may land, of those.
+fn focus_stops(placed: &[Placed], shown: &[usize]) -> Vec<Entity> {
+    shown
+        .iter()
+        .filter(|&&index| takes_focus(&placed[index].widget))
+        .map(|&index| placed[index].entity)
+        .collect()
+}
+
+/// The widgets whose `shortcut` landed this frame.
+///
+/// Consumed, so the chord a menu row owns does not also reach a script
+/// polling for it. A row of a shut menu answers: that is what a shortcut is
+/// for, and the menu never has to be opened to reach the command.
+fn shortcuts(ctx: &egui::Context, placed: &[Placed], shown: &[usize]) -> Vec<Entity> {
+    shown
+        .iter()
+        .filter_map(|&index| {
+            let widget = &placed[index].widget;
+            if widget.disabled {
+                return None;
+            }
+            let (modifiers, key) = crate::immediate::chord(&widget.shortcut)?;
+            ctx.input_mut(|input| input.consume_key(modifiers, key))
+                .then_some(placed[index].entity)
+        })
+        .collect()
 }
 
 /// Move focus, or say which widget an `accept` activated.
@@ -120,14 +147,34 @@ fn advance(eng: &Engine, stops: &[Entity], asked: Option<Move>) -> Option<Entity
 /// `area` less the part the on-screen keyboard covers. The keyboard is
 /// measured in the window's pixels, which are this pass's units.
 fn above_keyboard(eng: &Engine, area: egui::Rect) -> egui::Rect {
-    let covered = balaur_core::facts::device(eng).keyboard_height;
+    let facts = balaur_core::facts::device(eng);
+    // The fact is physical pixels, because that is what a keyboard covers,
+    // and a layout is design pixels.
+    let covered = facts.keyboard_height / facts.ui_scale.max(f32::EPSILON);
     let bottom = (area.max.y - covered).max(area.min.y);
     egui::Rect::from_min_max(area.min, egui::pos2(area.max.x, bottom))
 }
 
+/// The surface less what a notch, a status bar or a home bar covers.
+///
+/// The insets are a fact about the display, so they are the same whichever
+/// surface a root draws on: a root filling the screen loses them all, and one
+/// in a viewport that the notch does not reach loses nothing.
+fn inside_safe_area(eng: &Engine, area: egui::Rect) -> egui::Rect {
+    let facts = balaur_core::facts::device(eng);
+    let per_point = facts.ui_scale.max(f32::EPSILON);
+    let [left, top, right, bottom] = facts.safe_area.map(|edge| edge / per_point);
+    let screen = facts.design_size();
+    let safe = egui::Rect::from_min_max(
+        egui::pos2(left, top),
+        egui::pos2(screen[0] - right, screen[1] - bottom),
+    );
+    area.intersect(safe)
+}
+
 /// Draw every widget entity. Runs inside the frame's egui pass, after the
 /// scripts' `draw_ui`.
-pub(crate) fn draw(eng: &Engine, ctx: &egui::Context, scale: f32) {
+pub(crate) fn draw(eng: &Engine, ctx: &egui::Context) {
     let Some(layer) = eng.try_resource::<WidgetLayerConfig>() else {
         return;
     };
@@ -172,15 +219,18 @@ pub(crate) fn draw(eng: &Engine, ctx: &egui::Context, scale: f32) {
     let asked = (keyboard && !ctx.egui_wants_keyboard_input())
         .then(|| keyboard_move(ctx))
         .flatten();
-    let stops = focus_stops(&placed, &roots, &|name| surface_of(name).enabled);
+    let shown = reachable(&placed, &roots, &|name| surface_of(name).enabled);
+    let stops = focus_stops(&placed, &shown);
     let accepted = advance(eng, &stops, asked);
+    // A chord is a click by another name, as an `accept` is.
+    let fired = shortcuts(ctx, &placed, &shown);
     let focused = eng
         .try_resource::<UiFocus>()
         .and_then(|f| f.borrow().focused);
+    let mut toasts = crate::widget::toast::Stack::default();
     let mut painting = Painting {
         eng,
         arena: &placed,
-        scale,
         focused,
         theme: theme_root(eng),
         assigned: egui::Vec2::ZERO,
@@ -191,8 +241,9 @@ pub(crate) fn draw(eng: &Engine, ctx: &egui::Context, scale: f32) {
         touched,
         // An `accept` is a click by another name: same `clicked`, same
         // `on_click`, so it starts the frame's list rather than a second one.
-        clicked: accepted.into_iter().collect(),
+        clicked: accepted.into_iter().chain(fired).collect(),
         state: (false, false),
+        context_opened: false,
     };
     for root in &roots {
         let root = *root;
@@ -206,12 +257,14 @@ pub(crate) fn draw(eng: &Engine, ctx: &egui::Context, scale: f32) {
             continue;
         }
         let area = match surface.rect {
-            Some([x, y, w, h]) => {
-                egui::Rect::from_min_size(pos2(x * scale, y * scale), vec2(w * scale, h * scale))
-            }
+            Some([x, y, w, h]) => egui::Rect::from_min_size(pos2(x, y), vec2(w, h)),
             None => screen,
         };
-        draw_root(ctx, &mut painting, root, area);
+        // A toast is pushed clear of the toasts already at its anchor, and
+        // is drawn thinner as its time runs out.
+        let (area, fade) = toasts.place(eng, &placed[root], area);
+        draw_root(ctx, &mut painting, root, area, fade);
+        toasts.drew(&placed[root]);
     }
     // Published at the end of the draw, not the start of the next one: a
     // script's `draw_ui` runs after this and reads this frame's rects.
@@ -223,6 +276,8 @@ pub(crate) fn draw(eng: &Engine, ctx: &egui::Context, scale: f32) {
     // Dropped before the arena moves: `Painting` borrows it for the draw.
     drop(painting);
     keep(placed, roots, index_of, stamp);
+    // After the pass, never inside it: the arena the draw walked names them.
+    crate::widget::toast::clear(eng, &toasts.expired());
     // Only on the change: a handler firing every frame focus merely *stayed*
     // would be a different event, and not a useful one.
     let arrived = (focused != was_focused).then_some(focused).flatten();
@@ -232,19 +287,33 @@ pub(crate) fn draw(eng: &Engine, ctx: &egui::Context, scale: f32) {
 /// Draw one root into the area its surface gives it, and record where it
 /// landed. Split from [`draw`] under `MAX_FN_LINES`; the seam is one root's
 /// own placement and pass, which needs nothing from the loop around it.
-fn draw_root(ctx: &egui::Context, painting: &mut Painting<'_>, root: usize, area: egui::Rect) {
-    let (eng, placed, scale) = (painting.eng, painting.arena, painting.scale);
+fn draw_root(
+    ctx: &egui::Context,
+    painting: &mut Painting<'_>,
+    root: usize,
+    area: egui::Rect,
+    fade: f32,
+) {
+    let (eng, placed) = (painting.eng, painting.arena);
     let entity = placed[root].entity;
     let widget = &placed[root].widget;
-    if widget.kind == w::DIALOG {
-        crate::widget::kinds::dialog_backdrop(ctx, entity, area);
+    // A dialog is shut by the scene, by Escape or by a click on the dim
+    // behind it; shut, it is not drawn and nothing is kept out.
+    let modal = widget.kind == w::DIALOG;
+    if modal && !widget.open {
+        return;
     }
+    let area = if widget.safe_area {
+        inside_safe_area(eng, area)
+    } else {
+        area
+    };
     let area = if widget.avoid_keyboard {
         above_keyboard(eng, area)
     } else {
         area
     };
-    let (pos, align, mut assigned, order) = crate::widget::anchor::root_frame(widget, area, scale);
+    let (pos, align, mut assigned, order) = crate::widget::anchor::root_frame(widget, area);
     // A root spanning one axis states or measures the other.
     if (assigned.x == 0.0) != (assigned.y == 0.0) {
         assigned = measured(eng, ctx, painting, root, area, assigned);
@@ -261,32 +330,51 @@ fn draw_root(ctx: &egui::Context, painting: &mut Painting<'_>, root: usize, area
     let mut root_area = egui::Area::new(egui::Id::new(("balaur-widget", entity)))
         .order(order)
         .pivot(align)
-        .fixed_pos(pos);
+        .fixed_pos(pos)
+        // A toast is read, not used: it takes no click from what is under it.
+        .interactable(widget.kind != w::TOAST);
     if assigned != egui::Vec2::ZERO {
         // Egui's first frame otherwise guesses a size and pushes the corner
         // in to keep the guess on screen, and the cursor keeps it there.
         root_area = root_area.default_size(assigned);
     }
-    let shown = root_area
-        // A widget appears when the scene says so, at the alpha its own
-        // theme sets; egui's fade would override both.
-        .fade_in(false)
-        .show(ctx, |ui| {
-            // A root handed a box reserves it before anything draws: its
-            // children are placed at absolute rects and report nothing
-            // back, so the area would otherwise hug the first of them.
-            if assigned != egui::Vec2::ZERO {
-                ui.set_max_size(assigned);
-                ui.advance_cursor_after_rect(egui::Rect::from_min_size(pos, assigned));
-            }
-            draw_one(ui, painting, root);
-        });
+    // A widget appears when the scene says so, at the alpha its own theme
+    // sets; egui's fade would override both.
+    let root_area = root_area.fade_in(false);
+    let fill = |ui: &mut egui::Ui, painting: &mut Painting<'_>| {
+        // A toast on its way out, drawn over what it covers.
+        ui.multiply_opacity(fade);
+        // A root handed a box reserves it before anything draws: its
+        // children are placed at absolute rects and report nothing
+        // back, so the area would otherwise hug the first of them.
+        if assigned != egui::Vec2::ZERO {
+            ui.set_max_size(assigned);
+            ui.advance_cursor_after_rect(egui::Rect::from_min_size(pos, assigned));
+        }
+        draw_one(ui, painting, root);
+    };
+    let shown = if modal {
+        // egui's own modal: it dims the screen, holds the layer above every
+        // other, keeps the pointer out of what is behind, and says when
+        // Escape or the dim was what asked to close.
+        let shut = egui::Modal::new(egui::Id::new(("balaur-dialog", entity)))
+            .area(root_area)
+            .frame(egui::Frame::NONE)
+            .backdrop_color(Color32::from_black_alpha(140))
+            .show(ctx, |ui| fill(ui, painting));
+        if shut.should_close() {
+            painting.edits.push((entity, Edit::Open(false)));
+        }
+        shut.response
+    } else {
+        root_area.show(ctx, |ui| fill(ui, painting)).response
+    };
     painting.assigned = egui::Vec2::ZERO;
     // A root is placed by nobody, so it records its own rect, from egui's
     // memory: the response's rect can lag it by a frame.
     let drawn = ctx
         .memory(|m| m.area_rect(egui::Id::new(("balaur-widget", entity))))
-        .unwrap_or(shown.response.rect);
+        .unwrap_or(shown.rect);
     record_rect(entity, drawn);
 }
 
@@ -320,7 +408,6 @@ fn place_root(
         painting.arena,
         root,
         &probe,
-        painting.scale,
         &theme_root(eng),
         &space,
         painting.fresh,
@@ -366,7 +453,6 @@ fn measured(
         painting.arena,
         root,
         &root_ui(ctx),
-        painting.scale,
         &theme_root(eng),
         &space,
         painting.fresh,
@@ -398,7 +484,7 @@ thread_local! {
 
 /// The theme a root starts from, before it names one of its own: the
 /// project's `ui/theme`, or the built-in look.
-fn theme_root(eng: &Engine) -> Rc<WidgetTheme> {
+pub(crate) fn theme_root(eng: &Engine) -> Rc<WidgetTheme> {
     let bare = BARE.with(Rc::clone);
     let project = balaur_core::project::UiSettings::from_settings(eng).theme;
     theme_of(eng, &project, &bare)
@@ -411,7 +497,6 @@ fn theme_root(eng: &Engine) -> Rc<WidgetTheme> {
 pub(crate) struct Painting<'a> {
     pub(crate) eng: &'a Engine,
     pub(crate) arena: &'a [Placed],
-    pub(crate) scale: f32,
     pub(crate) focused: Option<Entity>,
     /// The theme in force here, inherited unless a widget names its own.
     pub(crate) theme: Rc<WidgetTheme>,
@@ -435,6 +520,10 @@ pub(crate) struct Painting<'a> {
     /// held there. Set by the draw and never by the measure: a size that
     /// followed the pointer would move whatever sits beside it.
     pub(crate) state: (bool, bool),
+    /// Whether a widget already opened its `context` menu for this pass's
+    /// press. Children draw before the parent asks, so the innermost one
+    /// under the pointer takes it.
+    pub(crate) context_opened: bool,
 }
 
 impl Painting<'_> {
@@ -463,12 +552,12 @@ impl Painting<'_> {
 
     /// The look of the widget at `index`, resolved once a frame.
     pub(crate) fn look(&self, index: usize) -> Rc<Look> {
-        let look = look_of(self.arena, index, &self.theme, self.scale);
+        let look = look_of(self.arena, index, &self.theme);
         let styled = self.in_state(Rc::clone(&look.style));
         if Rc::ptr_eq(&styled, &look.style) {
             return look;
         }
-        let (ink, font) = face(&self.theme, &styled, &self.arena[index].widget, self.scale);
+        let (ink, font) = face(&self.theme, &styled, &self.arena[index].widget);
         Rc::new(Look {
             style: styled,
             font,
@@ -479,7 +568,7 @@ impl Painting<'_> {
     /// The look with no state on it, for a kind that answers the pointer with
     /// its own response rather than with the box the layout gave it.
     pub(crate) fn resting(&self, index: usize) -> Rc<Look> {
-        look_of(self.arena, index, &self.theme, self.scale)
+        look_of(self.arena, index, &self.theme)
     }
 
     /// A style with its `hover` or `active` table over it, where the pointer
@@ -517,6 +606,8 @@ pub(crate) enum Edit {
     Color([f32; 4]),
     /// A window's title bar dragged, in design pixels.
     Moved([f32; 2]),
+    /// The target of a `[url]` span that was clicked.
+    Link(String),
 }
 
 /// Draw one widget and, when it is a container, what is laid out inside it.
@@ -562,7 +653,9 @@ pub(crate) fn caption(eng: &Engine, widget: &Widget) -> SmolStr {
 fn draw_themed(ui: &mut egui::Ui, at: &mut Painting<'_>, index: usize) {
     let disabled = at.arena[index].widget.disabled;
     let outer = std::mem::replace(&mut at.state, pointer_state(ui, disabled));
+    crate::widget::kinds::context_sensor(ui, at, index);
     draw_kind(ui, at, index);
+    crate::widget::kinds::context_menu(ui, at, index);
     at.state = outer;
 }
 
@@ -580,7 +673,6 @@ fn draw_kind(ui: &mut egui::Ui, at: &mut Painting<'_>, index: usize) {
     let placed = &at.arena[index];
     let widget = &placed.widget;
     let caption = caption(at.eng, widget);
-    let scale = at.scale;
     let look = at.look(index);
     let (color, font) = (look.ink, look.font.clone());
     let (tooltip, entity) = (widget.tooltip.clone(), placed.entity);
@@ -597,7 +689,7 @@ fn draw_kind(ui: &mut egui::Ui, at: &mut Painting<'_>, index: usize) {
         w::TEXT_AREA => crate::widget::text::text_area(ui, at, index, &font, color),
         // A dialog is a panel drawn over a dimmed screen; the dimming is the
         // root draw's, so here it is the panel.
-        w::PANEL | w::DIALOG => panel(ui, at, index, &caption, &font, color),
+        w::PANEL | w::DIALOG | w::TOAST => panel(ui, at, index, &caption, &font, color),
         w::WINDOW => crate::widget::window::window(ui, at, index, &caption, &font, color),
         w::CHECK => crate::widget::kinds::check(ui, at, index, &caption, &font, color),
         w::COLOR => crate::widget::kinds::color(ui, at, index),
@@ -632,7 +724,7 @@ fn draw_kind(ui: &mut egui::Ui, at: &mut Painting<'_>, index: usize) {
             if widget.draw.is_empty() {
                 return;
             }
-            let want = box_of(widget, at.assigned, scale);
+            let want = box_of(widget, at.assigned);
             let room = ui.max_rect();
             let size = vec2(
                 if want.x > 0.0 { want.x } else { room.width() },
@@ -641,7 +733,15 @@ fn draw_kind(ui: &mut egui::Ui, at: &mut Painting<'_>, index: usize) {
             let rect = egui::Rect::from_min_size(room.min, size);
             let entity = placed.entity;
             let target = widget.draw.clone();
-            let mut inner = ui.new_child(egui::UiBuilder::new().max_rect(rect));
+            // A row's body sits on the row's centre line, where `ui::right`
+            // puts its own run: a field and the dropdown after it are one line.
+            let layout = *ui.layout();
+            let layout = if layout.is_horizontal() {
+                layout.with_cross_align(egui::Align::Center)
+            } else {
+                layout
+            };
+            let mut inner = ui.new_child(egui::UiBuilder::new().max_rect(rect).layout(layout));
             inner.set_clip_rect(rect.intersect(ui.clip_rect()));
             crate::bridge::scoped_named(
                 at.eng,
@@ -662,7 +762,7 @@ fn draw_kind(ui: &mut egui::Ui, at: &mut Painting<'_>, index: usize) {
             ));
         }
         _ => {
-            if !crate::widget::text::shaped_label(ui, at, index, widget, &caption, color, &font) {
+            if !crate::widget::text::shaped_label(ui, at, index, &caption, color, &font) {
                 let mut label = egui::Label::new(
                     egui::RichText::new(caption.as_str())
                         .font(font)
@@ -703,7 +803,7 @@ fn tip(ui: &egui::Ui, entity: Entity, tooltip: &str) {
     let id = egui::Id::new(("balaur-tip", entity));
     let response = ui.interact(rect, id, egui::Sense::hover());
     if ui.is_enabled() {
-        response.on_hover_text(tooltip);
+        crate::widget::theme::tip(&response, tooltip);
     } else {
         response.on_disabled_hover_text(tooltip);
     }
@@ -749,8 +849,8 @@ pub(crate) fn image_size(stated: egui::Vec2, native: egui::Vec2) -> egui::Vec2 {
 }
 
 /// A framed box that lays its children out, with the padding taken off in
-/// floats: `egui::Margin` is whole device pixels, and 10 design px at the
-/// editor's 1.25 scale is not one.
+/// floats: `egui::Margin` is whole points, and a theme is free to ask for
+/// half of one.
 ///
 /// The background is reserved before the children and filled in afterwards,
 /// which is how it can be sized to content it has not drawn yet.
@@ -762,11 +862,10 @@ fn panel(
     font: &egui::FontId,
     color: Color32,
 ) {
-    let scale = at.scale;
     let widget = &at.arena[index].widget;
     let style = at.style_of(widget);
-    let pad = padding_of(widget, &style, scale);
-    let box_size = box_of(widget, at.assigned, scale);
+    let pad = padding_of(widget, &style);
+    let box_size = box_of(widget, at.assigned);
     let plate = ui.painter().add(egui::Shape::Noop);
     let min = (box_size - pad.taken()).max(egui::Vec2::ZERO);
     let mut inner = ui.new_child(egui::UiBuilder::new().max_rect(pad.inside(ui.max_rect())));
@@ -778,23 +877,24 @@ fn panel(
     let held = std::mem::replace(&mut at.bounds, min);
     lay_out(&mut inner, at, index, Axis::Column);
     at.bounds = held;
-    let background = pad.around(inner.min_rect());
+    // Measured from the children where there are only children: a root that
+    // hugs at a right or bottom corner sits in an `Area` whose own corner is
+    // far from it, and the `Ui` would stretch the plate back to that corner.
+    let content = at.arena[index]
+        .children
+        .iter()
+        .filter_map(|child| at.rects.get(child).copied())
+        .reduce(egui::Rect::union)
+        .filter(|_| caption.is_empty() && box_size == egui::Vec2::ZERO);
+    let background = pad.around(content.unwrap_or_else(|| inner.min_rect()));
     if let Some(path) = style.image.as_ref() {
-        crate::widget::kinds::nine_patch_plate(
-            ui,
-            at.eng,
-            plate,
-            path,
-            style.slice,
-            background,
-            scale,
-        );
+        crate::widget::kinds::nine_patch_plate(ui, at.eng, plate, path, style.slice, background);
     } else {
         ui.painter().set(
             plate,
             egui::epaint::RectShape::new(
                 background,
-                egui::CornerRadius::same(style.radius.map_or(8.0, |r| r * scale) as u8),
+                egui::CornerRadius::same(style.radius.unwrap_or(8.0) as u8),
                 style.fill.unwrap_or(Color32::from_black_alpha(96)),
                 style
                     .stroke
@@ -825,7 +925,7 @@ fn image(ui: &mut egui::Ui, at: &mut Painting<'_>, index: usize) {
     let ctx = ui.ctx().clone();
     match crate::images::texture_of(at.eng, &ctx, &widget.source) {
         Ok(texture) => {
-            let size = image_size(box_of(widget, at.assigned, at.scale), texture.size_vec2());
+            let size = image_size(box_of(widget, at.assigned), texture.size_vec2());
             if widget.slice.iter().any(|v| *v > 0.0) {
                 // The borders stay the picture's own size; only the middle
                 // stretches to the box.
@@ -835,7 +935,6 @@ fn image(ui: &mut egui::Ui, at: &mut Painting<'_>, index: usize) {
                     texture.size_vec2(),
                     rect,
                     widget.slice,
-                    at.scale,
                 );
                 ui.painter().add(egui::Shape::Vec(shapes));
                 if response.clicked() {
@@ -849,7 +948,7 @@ fn image(ui: &mut egui::Ui, at: &mut Painting<'_>, index: usize) {
                     at.clicked.push(entity);
                 }
             } else {
-                let box_size = box_of(widget, at.assigned, at.scale).max(size);
+                let box_size = box_of(widget, at.assigned).max(size);
                 let (rect, response) = ui.allocate_exact_size(box_size, sense);
                 let held = fitted(&widget.fit, rect, texture.size_vec2());
                 ui.painter().image(

@@ -35,11 +35,12 @@ pub(crate) mod words {
     pub(crate) const SEPARATOR: &str = "separator";
     pub(crate) const CODE: &str = "code";
     pub(crate) const TABLE: &str = "table";
+    pub(crate) const TOAST: &str = "toast";
     /// The widget kinds, in the order the picker offers them.
     pub(crate) const WIDGET_KINDS: &[&str] = &[
         LABEL, BUTTON, PANEL, ROW, COLUMN, SCROLL, TAB, DRAW, IMAGE, FIELD, TEXT_AREA, CHECK,
         COLOR, DROPDOWN, MENU, LIST, TREE, TABLE, SLIDER, DRAG_VALUE, PROGRESS, GRID, FLOW, FOLD,
-        DIALOG, WINDOW, SEPARATOR, CODE, STACK,
+        DIALOG, TOAST, WINDOW, SEPARATOR, CODE, STACK,
     ];
 
     pub(crate) const CONTAIN: &str = "contain";
@@ -92,11 +93,23 @@ pub(crate) mod words {
     /// Where a container puts its children, and where text sits.
     pub(crate) const ALIGNS: &[&str] = &[START, CENTER, END];
 
+    pub(crate) const BOTH: &str = "both";
+    pub(crate) const HORIZONTAL: &str = "horizontal";
+    pub(crate) const VERTICAL: &str = "vertical";
+    /// Which way a scroll moves.
+    pub(crate) const AXES: &[&str] = &[BOTH, HORIZONTAL, VERTICAL];
+
     pub(crate) const BETWEEN: &str = "between";
     pub(crate) const AROUND: &str = "around";
     pub(crate) const EVENLY: &str = "evenly";
     /// How a container spreads its children along its own direction.
     pub(crate) const JUSTIFYS: &[&str] = &[START, CENTER, END, BETWEEN, AROUND, EVENLY];
+
+    pub(crate) const ABOVE: &str = "above";
+    pub(crate) const BELOW: &str = "below";
+    pub(crate) const POINTER: &str = "pointer";
+    /// Where a menu opens against the button that drops it.
+    pub(crate) const PLACEMENTS: &[&str] = &[BELOW, ABOVE, POINTER, CENTER];
 
     pub(crate) const NORMAL: &str = "normal";
     pub(crate) const ITALIC: &str = "italic";
@@ -120,6 +133,7 @@ pub(crate) mod words {
 pub(crate) mod keys {
     pub(crate) const ACTIVE: &str = "active";
     pub(crate) const ALIGN: &str = "align";
+    pub(crate) const ARROWS: &str = "arrows";
     pub(crate) const ANCHOR: &str = "anchor";
     pub(crate) const AUTOFOCUS: &str = "autofocus";
     pub(crate) const AVOID_KEYBOARD: &str = "avoid_keyboard";
@@ -134,6 +148,7 @@ pub(crate) mod keys {
     pub(crate) const COLLAPSIBLE: &str = "collapsible";
     pub(crate) const COLOR: &str = "color";
     pub(crate) const COLUMNS: &str = "columns";
+    pub(crate) const CONTEXT: &str = "context";
     pub(crate) const CURRENT_FILL: &str = "current_fill";
     pub(crate) const CURRENT_LINE: &str = "current_line";
     pub(crate) const D: &str = "d";
@@ -141,6 +156,7 @@ pub(crate) mod keys {
     pub(crate) const DEADZONE: &str = "deadzone";
     pub(crate) const DECIMALS: &str = "decimals";
     pub(crate) const DISABLED: &str = "disabled";
+    pub(crate) const DURATION: &str = "duration";
     pub(crate) const DRAW: &str = "draw";
     pub(crate) const FILL: &str = "fill";
     pub(crate) const FOCUSABLE: &str = "focusable";
@@ -178,11 +194,16 @@ pub(crate) mod keys {
     pub(crate) const LINE_HEIGHT: &str = "line_height";
     pub(crate) const MARKUP: &str = "markup";
     pub(crate) const MAX: &str = "max";
+    pub(crate) const AXIS: &str = "axis";
     pub(crate) const MAX_HEIGHT: &str = "max_height";
+    pub(crate) const MAX_WIDTH: &str = "max_width";
     pub(crate) const MAX_LENGTH: &str = "max_length";
     pub(crate) const MENU: &str = "menu";
     pub(crate) const MENU_CLICK: &str = "menu_click";
     pub(crate) const MIN: &str = "min";
+    pub(crate) const HIDE_NARROWER: &str = "hide_narrower";
+    pub(crate) const HIDE_WIDER: &str = "hide_wider";
+    pub(crate) const HIDE_SHORTER: &str = "hide_shorter";
     pub(crate) const MIN_HEIGHT: &str = "min_height";
     pub(crate) const MIN_WIDTH: &str = "min_width";
     pub(crate) const NUMERIC: &str = "numeric";
@@ -192,6 +213,7 @@ pub(crate) mod keys {
     pub(crate) const ON_CHANGE: &str = "on_change";
     pub(crate) const ON_CLICK: &str = "on_click";
     pub(crate) const ON_FILL: &str = "on_fill";
+    pub(crate) const ON_LINK: &str = "on_link";
     pub(crate) const ON_FOCUS: &str = "on_focus";
     pub(crate) const ON_KNOB: &str = "on_knob";
     pub(crate) const ON_SUBMIT: &str = "on_submit";
@@ -201,6 +223,7 @@ pub(crate) mod keys {
     pub(crate) const PADDING_X: &str = "padding_x";
     pub(crate) const PADDING_Y: &str = "padding_y";
     pub(crate) const PLACEHOLDER: &str = "placeholder";
+    pub(crate) const PLACEMENT: &str = "placement";
     pub(crate) const PREFIX: &str = "prefix";
     pub(crate) const PREFIX_COLOR: &str = "prefix_color";
     pub(crate) const PROBLEM_COLOR: &str = "problem_color";
@@ -214,6 +237,8 @@ pub(crate) mod keys {
     pub(crate) const SCRIM: &str = "scrim";
     pub(crate) const ROW_HEIGHT: &str = "row_height";
     pub(crate) const SECRET: &str = "secret";
+    pub(crate) const SELECTABLE: &str = "selectable";
+    pub(crate) const SHORTCUT: &str = "shortcut";
     pub(crate) const SELECTED: &str = "selected";
     pub(crate) const SEPARATOR: &str = "separator";
     pub(crate) const SIZE: &str = "size";
@@ -243,6 +268,7 @@ pub(crate) mod keys {
     pub(crate) const TRANSPARENT: &str = "transparent";
     pub(crate) const TRUNCATE: &str = "truncate";
     pub(crate) const VALUE: &str = "value";
+    pub(crate) const SAFE_AREA: &str = "safe_area";
     pub(crate) const VISIBLE: &str = "visible";
     pub(crate) const W: &str = "w";
     pub(crate) const WARNING_COLOR: &str = "warning_color";

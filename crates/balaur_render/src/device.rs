@@ -28,19 +28,18 @@ impl Probe {
         let dark_mode = dark_mode();
         let safe_area = safe_area(window);
         let keyboard = keyboard_height(window);
+        let text_scale = window.text_scale().max(f32::EPSILON);
         let screen_size = [window.width() as f32, window.height() as f32];
-        // Published so a touch control, placed in the tick, can reach it.
-        let ui_scale = app
-            .engine
-            .try_resource::<balaur_ui::UiConfig>()
-            .map_or(1.0, |config| config.borrow().scale)
-            .max(f32::EPSILON);
+        // Physical pixels per design pixel: the zoom times the display's own
+        // scale, since the scale a script sets is only half of it.
+        let ui_scale = window.egui_pixels_per_point().max(f32::EPSILON);
         let game_area = game_area(app, ui_scale);
         balaur_core::facts::update_device(&app.engine, |facts| {
             facts.dark_mode = dark_mode;
             facts.safe_area = safe_area;
             facts.screen_size = screen_size;
             facts.ui_scale = ui_scale;
+            facts.text_scale = text_scale;
             facts.keyboard_height = keyboard;
             facts.game_area = game_area;
             if let Some(rate) = refresh_rate {
@@ -74,6 +73,7 @@ fn game_area(app: &App, scale: f32) -> Option<[f32; 4]> {
     if !layer.enabled {
         return Some([0.0; 4]);
     }
+    // The layer measures in design pixels and this fact is physical.
     layer.rect.map(|rect| rect.map(|v| v * scale))
 }
 

@@ -95,6 +95,10 @@ pub struct Style {
     /// What replaces this style while the pointer is over the widget, and
     /// while it is held down. Each is a whole style over this one.
     pub hover: Option<Rc<Style>>,
+    /// The `[kind.<class>]` tables this entry carries, by class word. Folded
+    /// over the entry when the screen answers to one, so a theme states a
+    /// touch height beside the height it states for a cursor.
+    pub classes: Option<Rc<Vec<(SmolStr, Style)>>>,
     pub active: Option<Rc<Style>>,
 }
 
@@ -152,6 +156,7 @@ impl Style {
             icon_color: self.icon_color.or(base.icon_color),
             round: self.round.or(base.round),
             hover: self.hover.clone().or_else(|| base.hover.clone()),
+            classes: self.classes.clone().or_else(|| base.classes.clone()),
             active: self.active.clone().or_else(|| base.active.clone()),
         }
     }
@@ -182,6 +187,10 @@ pub struct WidgetTheme {
     /// long as the theme lives, and working it out walked two maps and cloned
     /// a style for every widget on the screen, every frame.
     settled: RefCell<rustc_hash::FxHashMap<(SmolStr, SmolStr), Rc<Style>>>,
+    /// The class generation `settled` was filled under. A new one empties it
+    /// rather than keying beside it, so a rotation does not leave the last
+    /// screen's styles in the map for the life of the theme.
+    settled_at: std::cell::Cell<u32>,
 }
 
 impl WidgetTheme {
@@ -194,7 +203,9 @@ impl WidgetTheme {
         // A stack is a panel that lays its children over one another, so
         // either takes the other's entry when the theme names only one.
         let sibling = match kind {
-            w::STACK => w::PANEL,
+            // A stack is a panel that lays its children over one another,
+            // and a toast one that leaves on its own.
+            w::STACK | w::TOAST => w::PANEL,
             w::PANEL => w::STACK,
             _ => return Style::default(),
         };
@@ -205,15 +216,22 @@ impl WidgetTheme {
     /// role: a theme that has not been given one yet still draws.
     #[must_use]
     pub fn resolved(&self, kind: &str, role: &str) -> Rc<Style> {
+        let (active, generation) = pass_classes();
+        // The screen's classes are part of the answer, so a rotation empties
+        // what the last screen settled on rather than reading it back.
+        if self.settled_at.replace(generation) != generation {
+            self.settled.borrow_mut().clear();
+        }
         let key = (SmolStr::new(kind), SmolStr::new(role));
         if let Some(held) = self.settled.borrow().get(&key) {
             return Rc::clone(held);
         }
         let base = self.style(kind);
-        let made = Rc::new(match self.roles.get(role) {
+        let settled = match self.roles.get(role) {
             Some(style) => style.over(&base),
             None => base,
-        });
+        };
+        let made = Rc::new(in_classes(&settled, &active));
         self.settled.borrow_mut().insert(key, Rc::clone(&made));
         made
     }
@@ -227,6 +245,21 @@ impl WidgetTheme {
         }
         parse_color(name).or_else(|| self.colors.get(name).copied())
     }
+}
+
+/// One style with every class table the screen answers to folded over it,
+/// broad to narrow. A style with no class table is returned as it stands.
+fn in_classes(style: &Style, active: &[SmolStr]) -> Style {
+    let Some(classes) = style.classes.as_ref() else {
+        return style.clone();
+    };
+    let mut settled = style.clone();
+    for (word, over) in classes.iter() {
+        if active.iter().any(|held| held == word) {
+            settled = over.over(&settled);
+        }
+    }
+    settled
 }
 
 /// `#rrggbb` or `#rrggbbaa`, the spelling the editor's theme already uses.
@@ -259,6 +292,93 @@ fn color(value: &toml::Value, what: &str, colors: &BTreeMap<String, Color32>) ->
 /// The tables that name something other than a widget kind.
 fn is_reserved(key: &str) -> bool {
     matches!(key, "type" | "dark" | "colors" | "roles")
+}
+
+// The class words in force, and a number that changes when they do, so the
+// resolved-style cache answers for this pass's screen, not the last one's.
+thread_local! {
+    static PASS_CLASSES: RefCell<(Rc<[SmolStr]>, u32)> = RefCell::new((Rc::from([]), 0));
+}
+
+/// Tell the theme which classes this pass answers to. Called once a pass,
+/// before anything is drawn.
+pub(crate) fn set_pass_classes(active: &[&str]) {
+    PASS_CLASSES.with(|held| {
+        let mut held = held.borrow_mut();
+        if held.0.len() == active.len() && held.0.iter().zip(active).all(|(a, b)| a == b) {
+            return;
+        }
+        held.0 = active.iter().map(|word| SmolStr::new(*word)).collect();
+        held.1 = held.1.wrapping_add(1);
+        // Shared with every `resolved` call this pass, which was cloning a
+        // vector per widget before.
+    });
+}
+
+/// The classes in force and the number that stands for them.
+fn pass_classes() -> (Rc<[SmolStr]>, u32) {
+    PASS_CLASSES.with(|held| {
+        let held = held.borrow();
+        (Rc::clone(&held.0), held.1)
+    })
+}
+
+/// Whether a finger is what reaches this screen, as the pass settled it.
+pub(crate) fn pass_is_touch() -> bool {
+    PASS_CLASSES.with(|held| {
+        held.borrow()
+            .0
+            .iter()
+            .any(|word| word == balaur_core::tags::TOUCH)
+    })
+}
+
+/// A tooltip a cursor gets by resting and a finger gets by holding.
+///
+/// Touch has no hover: a finger that lands is a click, and egui hides a
+/// tooltip that a click preceded, so `on_hover_text` alone means a phone
+/// never sees one. Held open until the finger lifts, since a long press is
+/// one frame and a tooltip nobody can read is not one.
+pub(crate) fn tip(response: &egui::Response, text: &str) {
+    if text.is_empty() {
+        return;
+    }
+    if !pass_is_touch() {
+        response.clone().on_hover_text(text.to_owned());
+        return;
+    }
+    // Timed here rather than taken from `Response::long_touched`, which egui
+    // only sets on a widget that senses a click: a tooltip's own rect senses
+    // hover, and giving it a click would take the press off the control.
+    let (down, now) = response.ctx.input(|i| (i.pointer.any_down(), i.time));
+    let length = response
+        .ctx
+        .options(|options| options.input_options.max_click_duration);
+    let over = response.contains_pointer();
+    HELD_TIP.with(|held| {
+        let mut held = held.borrow_mut();
+        if !down || !over {
+            if held.is_some_and(|(id, _)| id == response.id) {
+                *held = None;
+            }
+            return;
+        }
+        let (_, since) = *held.get_or_insert((response.id, now));
+        if held.is_some_and(|(id, _)| id != response.id) {
+            *held = Some((response.id, now));
+            return;
+        }
+        if now - since >= length {
+            response.show_tooltip_text(text.to_owned());
+        }
+    });
+}
+
+thread_local! {
+    /// The widget a finger is resting on, and when it landed. One at a time,
+    /// because one finger drives the pointer.
+    static HELD_TIP: std::cell::RefCell<Option<(egui::Id, f64)>> =
+        const { std::cell::RefCell::new(None) };
 }
 
 /// One `[kind]` or `[roles.name]` table as a style, with its own `hover` and
@@ -324,7 +444,25 @@ fn style_of(body: &toml::Table, colors: &BTreeMap<String, Color32>, what: &str) 
             }))
         }),
         active: nested("active"),
+        classes: class_styles(body, colors, what),
     }
+}
+
+/// The `[kind.<class>]` tables, in the order they override: the input class,
+/// then the height, then the width.
+fn class_styles(
+    body: &toml::Table,
+    colors: &BTreeMap<String, Color32>,
+    what: &str,
+) -> Option<Rc<Vec<(SmolStr, Style)>>> {
+    let found: Vec<(SmolStr, Style)> = crate::widget::schema::CLASS_KEYS
+        .into_iter()
+        .filter_map(|word| {
+            let table = body.get(word)?.as_table()?;
+            Some((SmolStr::new(word), style_of(table, colors, what)))
+        })
+        .collect();
+    (!found.is_empty()).then(|| Rc::new(found))
 }
 
 /// Parse a theme document. Registered with `App::register_asset_type`, so
@@ -389,6 +527,7 @@ type = "widget_theme"            # a widget takes the theme of the nearest ances
 [colors]                         # named fills the rest of the file may use
 ink = "#1b1b1b"
 sky = "#3aa0ff"
+link = "#3aa0ff"                 # what a `[url]` span in markup text is drawn in
 
 [button]                         # one table per kind: [panel], [row], ...; a kind left out keeps the built-in look
 fill = "sky"
@@ -420,6 +559,61 @@ pub(crate) const ASSET_TYPE: &str = "widget_theme";
 /// that, and the `fill`, `stroke` and `radius` it states over both.
 ///
 /// The measure pass calls this too, so a row is sized at the face it draws at.
+/// Dress the egui widgets a kind is drawn from in that kind's own style.
+///
+/// A `drag_value`, a `slider` and a `field` are egui's widgets, so they wear
+/// egui's palette unless the theme is told to them here: a screen whose
+/// theme names a `[drag_value]` would otherwise show egui's grey beside the
+/// buttons it dressed itself. A theme that names nothing changes nothing.
+pub(crate) fn dress(ui: &mut egui::Ui, style: &Style, ink: Color32) {
+    let radius = style
+        .radius
+        .map(|r| egui::CornerRadius::same(r.clamp(0.0, 255.0) as u8));
+    let edge = |style: &Style| {
+        style
+            .stroke
+            .map(|color| egui::Stroke::new(style.stroke_px(), color))
+    };
+    let visuals = ui.visuals_mut();
+    for (state, look) in [
+        (&mut visuals.widgets.inactive, Some(style)),
+        (
+            &mut visuals.widgets.hovered,
+            style.hover.as_deref().or(Some(style)),
+        ),
+        (
+            &mut visuals.widgets.active,
+            style
+                .active
+                .as_deref()
+                .or(style.hover.as_deref())
+                .or(Some(style)),
+        ),
+    ] {
+        let Some(look) = look else {
+            continue;
+        };
+        if let Some(fill) = look.fill {
+            state.bg_fill = fill;
+            state.weak_bg_fill = fill;
+        }
+        if let Some(stroke) = edge(look) {
+            state.bg_stroke = stroke;
+        }
+        if let Some(radius) = radius {
+            state.corner_radius = radius;
+        }
+        if let Some(color) = look.text_color {
+            state.fg_stroke.color = color;
+        }
+    }
+    // What a `field` draws its line on, which is not a widget state.
+    if let Some(fill) = style.fill {
+        visuals.extreme_bg_color = fill;
+    }
+    visuals.override_text_color = Some(ink);
+}
+
 pub(crate) fn styled(theme: &WidgetTheme, widget: &Widget) -> Rc<Style> {
     let settled = theme.resolved(&widget.kind, &widget.role);
     // The theme's own answer, shared, unless this widget overrides part of
@@ -468,12 +662,7 @@ pub(crate) fn family_of<'a>(style: &'a Style, widget: &'a Widget) -> &'a str {
 /// A property left at its default is the widget saying nothing, so the theme
 /// answers: a transparent `text_color`, a `font_size` of 0, the `ui` family
 /// and a weight of 400 each take what the role or the kind carries.
-pub(crate) fn face(
-    theme: &WidgetTheme,
-    style: &Style,
-    widget: &Widget,
-    scale: f32,
-) -> (Color32, egui::FontId) {
+pub(crate) fn face(theme: &WidgetTheme, style: &Style, widget: &Widget) -> (Color32, egui::FontId) {
     // The theme's own text colour last, not a constant: a widget with no role
     // drew in near-white, which is invisible on a light theme.
     let ink = if widget.text_color[3] > 0.0 {
@@ -491,7 +680,7 @@ pub(crate) fn face(
     };
     (
         ink,
-        egui::FontId::new(size * scale, family(family_of(style, widget))),
+        egui::FontId::new(size, family(family_of(style, widget))),
     )
 }
 

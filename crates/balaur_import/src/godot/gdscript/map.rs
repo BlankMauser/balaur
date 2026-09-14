@@ -103,7 +103,7 @@ pub(crate) fn global(name: &str, args: &[String]) -> Option<String> {
         "Vector3" => format!("(gd.vec3)({all})"),
         "Color" => format!("(gd.color)({all})"),
         "Callable" => format!("(gd.callable)({all})"),
-        "preload" | "load" => format!("(gd.load)({all})"),
+        "preload" | "load" => loaded(&args[0]),
         "instance_from_id" => format!("(gd.instance_from_id)({one})"),
         "get_tree" | "get_viewport" => TREE.into(),
         "get_viewport_rect" => "(gd.viewport_rect)()".into(),
@@ -120,8 +120,8 @@ pub(crate) fn global(name: &str, args: &[String]) -> Option<String> {
     })
 }
 
-// Several rows share a value without sharing a meaning: `CONNECT_ONE_SHOT` is
-// not a mouse button, and merging them would hide what each row is for.
+// Two singletons can answer alike without meaning alike, and merging the rows
+// would hide which call each one carries.
 #[allow(clippy::match_same_arms)]
 /// A static call on one of Godot's built-in singletons: `Time.get_ticks_msec()`,
 /// `OS.has_feature(..)`. Returns `None` for a class this does not carry, which
@@ -181,6 +181,12 @@ pub(crate) fn static_value(class: &str, name: &str) -> Option<String> {
         ("Vector2" | "Vector2i", "DOWN") => "(gd.vec2)(0.0, 1.0)".into(),
         ("Vector2" | "Vector2i", "LEFT") => "(gd.vec2)(-1.0, 0.0)".into(),
         ("Vector2" | "Vector2i", "RIGHT") => "(gd.vec2)(1.0, 0.0)".into(),
+        ("Tween", trans) if trans.starts_with("TRANS_") => {
+            quoted(&trans["TRANS_".len()..].to_lowercase())
+        }
+        ("Tween", mode) if mode.starts_with("EASE_") => {
+            quoted(&mode["EASE_".len()..].to_lowercase())
+        }
         ("Color", "WHITE") => "(gd.color)(1.0, 1.0, 1.0, 1.0)".into(),
         ("Color", "BLACK") => "(gd.color)(0.0, 0.0, 0.0, 1.0)".into(),
         ("Color", "TRANSPARENT") => "(gd.color)(0.0, 0.0, 0.0, 0.0)".into(),
@@ -245,14 +251,14 @@ pub(crate) fn property(receiver: &str, field: &str) -> Option<String> {
     }
     Some(match field {
         "visible" => format!("{receiver}.visible()"),
-        "global_position" => format!("{receiver}.global_position()"),
-        "position" => format!("{receiver}.position()"),
-        "scale" => format!("{receiver}.scale()"),
+        "global_position" => format!("(gd.vec_of)({receiver}.transform.global_position())"),
+        "position" => format!("(gd.vec_of)({receiver}.transform.position)"),
+        "scale" => format!("(gd.vec_of)({receiver}.transform.scale)"),
         "modulate" | "self_modulate" => format!("{receiver}.tint()"),
         "z_index" => format!("{receiver}.z_index()"),
         "name" => format!("{receiver}.name()"),
-        "rotation_degrees" => format!("{receiver}.rotation_degrees()"),
-        "rotation" => format!("math::rad({receiver}.rotation_degrees())"),
+        "rotation_degrees" => format!("math::deg((gd.rotation_of)({receiver}))"),
+        "rotation" => format!("(gd.rotation_of)({receiver})"),
         "current_scene" | "root" => "scene::root()".into(),
         "text" | "disabled" | "pressed" | "button_pressed" | "editable" | "selected"
         | "placeholder_text" | "tooltip_text" | "value" | "max_value" | "min_value" | "icon" => {
@@ -267,7 +273,45 @@ pub(crate) fn property(receiver: &str, field: &str) -> Option<String> {
     })
 }
 
+/// Godot's `Tween`, whose builder the shim runs over `animation::tween`.
+fn tween_verb(receiver: &str, name: &str, args: &[String]) -> Option<String> {
+    let all = args.join(", ");
+    let one = args.first().cloned().unwrap_or_default();
+    Some(match name {
+        "create_tween" => format!("(gd.create_tween)({receiver})"),
+        "set_trans" => format!("(gd.set_trans)({receiver}, {one})"),
+        "set_ease" => format!("(gd.set_ease)({receiver}, {one})"),
+        "tween_property" if args.len() == 4 => format!("(gd.tween_property)({receiver}, {all})"),
+        "tween_interval" => format!("(gd.tween_interval)({receiver}, {one})"),
+        "tween_callback" => format!("(gd.tween_callback)({receiver}, {one})"),
+        "kill" => format!("(gd.kill_tween)({receiver})"),
+        "is_running" => format!("(gd.tween_running)({receiver})"),
+        // Godot's chain verbs order steps a frame runs together; here a step
+        // starts as it is declared, so they are the tween itself.
+        "chain" | "parallel" | "set_parallel" | "set_loops" | "play" | "set_speed_scale" => {
+            receiver.to_string()
+        }
+        _ => return None,
+    })
+}
+
 /// A Godot global constant with a value here. Its enums are plain integers.
+/// `load("res://a/b.png")` is the project path here, so a component naming
+/// the asset gets what it expects. A path only known at run time goes to the
+/// shim, which does the same rewrite then.
+fn loaded(arg: &str) -> String {
+    let Some(literal) = arg.strip_prefix('"').and_then(|a| a.strip_suffix('"')) else {
+        return format!("(gd.load)({arg})");
+    };
+    let path = literal.strip_prefix("res://").unwrap_or(literal);
+    match path.strip_suffix(".tscn") {
+        Some(stem) => quoted(&format!("{stem}.toml")),
+        None => quoted(path),
+    }
+}
+
+// Several rows share a value without sharing a meaning: `CONNECT_ONE_SHOT` is
+// not a mouse button, and merging them would hide what each row is for.
 #[allow(clippy::match_same_arms)]
 pub(crate) fn global_constant(name: &str) -> Option<&'static str> {
     Some(match name {
@@ -327,8 +371,8 @@ pub(crate) fn setter(receiver: &str, field: &str, value: &str) -> Option<String>
         "modulate" | "self_modulate" => format!("(gd.set_tint)({receiver}, {value})"),
         "z_index" => format!("{receiver}.set_z_index({value})"),
         "name" => format!("{receiver}.set_name({value})"),
-        "rotation_degrees" => format!("{receiver}.set_rotation_degrees({value})"),
-        "rotation" => format!("{receiver}.set_rotation_degrees(math::deg({value}))"),
+        "rotation_degrees" => format!("(gd.set_rotation)({receiver}, math::rad({value}))"),
+        "rotation" => format!("(gd.set_rotation)({receiver}, {value})"),
         _ => return None,
     })
 }
@@ -339,6 +383,9 @@ pub(crate) fn setter(receiver: &str, field: &str, value: &str) -> Option<String>
 pub(crate) fn method(receiver: &str, name: &str, args: &[String]) -> Option<String> {
     let all = args.join(", ");
     let one = args.first().cloned().unwrap_or_default();
+    if let Some(text) = tween_verb(receiver, name, args) {
+        return Some(text);
+    }
     // A shim verb takes the value Godot called it on as its first argument.
     let with_receiver = |verb: &str| {
         if args.is_empty() {
@@ -436,6 +483,63 @@ pub(crate) fn method(receiver: &str, name: &str, args: &[String]) -> Option<Stri
 
 /// `sig.emit(..)` and `sig.connect(..)`, where `sig` is a signal this class
 /// declares. The engine names a signal with a string.
+/// The widget key a built-in Godot signal is spelled by here. A clicked
+/// widget calls `on_click` on the first ancestor whose script has the method,
+/// which is what `button.pressed.connect(self._on_pressed)` meant.
+pub(crate) fn widget_signal(signal: &str) -> Option<&'static str> {
+    Some(match signal {
+        "pressed" | "button_up" => "on_click",
+        "toggled" | "value_changed" | "text_changed" | "item_selected" | "color_changed" => {
+            "on_change"
+        }
+        "text_submitted" => "on_submit",
+        _ => return None,
+    })
+}
+
+/// Connecting one: the handler's name goes on the widget, and disconnecting
+/// takes it off again.
+pub(crate) fn widget_connect(receiver: &str, key: &str, handler: Option<&str>) -> String {
+    let name = quoted(handler.unwrap_or(""));
+    format!("{receiver}.patch_component(\"widget\", #{{ \"{key}\": {name} }})")
+}
+
+/// Hearing another node's signal. The engine calls the subscriber's
+/// `on_<name>`, which §Signals emits as a forwarder to Godot's handler.
+/// One script calling another's method. Godot reached it off the node; here
+/// the node is asked for it, and an object answers its own field. A shim per
+/// arity, because a Rune function takes the arguments it declares.
+pub(crate) fn invoke(receiver: &str, method: &str, args: &[String]) -> Option<String> {
+    if args.len() > MOST_ARGS {
+        return None;
+    }
+    let name = if args.is_empty() {
+        "invoke".to_string()
+    } else {
+        format!("invoke{}", args.len())
+    };
+    let list = if args.is_empty() {
+        String::new()
+    } else {
+        format!(", {}", args.join(", "))
+    };
+    Some(format!("(gd.{name})({receiver}, {}{list})", quoted(method)))
+}
+
+/// How many arguments the `invoke` shims cover. Past this a call is reported.
+pub(crate) const MOST_ARGS: usize = 3;
+
+pub(crate) fn signal_subscribe(receiver: &str, signal: &str) -> String {
+    format!(
+        "events::subscribe(this.node, {}, {receiver})",
+        quoted(signal)
+    )
+}
+
+pub(crate) fn signal_unsubscribe(receiver: &str, signal: &str) -> String {
+    format!("(gd.unlisten)(this.node, {}, {receiver})", quoted(signal))
+}
+
 pub(crate) fn signal_verb(signal: &str, verb: &str, args: &[String]) -> Option<String> {
     let name = quoted(signal);
     Some(match verb {

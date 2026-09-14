@@ -80,7 +80,22 @@ pub fn init(this) {
         palette_submit: false,
         chip_state: #{},
         compact: false,
+        // Empty until the first frame reads the screen, so whatever class it
+        // turns out to be is a change and folds the docks accordingly.
+        width_class: "",
+        height_class: "",
+        // The room's answers the docks were last folded for: a change is a
+        // new screen, whatever the class words did.
+        screen_key: "",
         ui_scale: 1.25,
+        // What the reader set, kept apart from what the screen makes of it:
+        // a touch screen draws larger without moving the setting.
+        asked_scale: 1.25,
+        touchscreen: false,
+        // Whether the first frame has run: the start-up states apply on it,
+        // after the screen's room has folded the docks.
+        platform_read: false,
+        start_states: "",
         script_buffers: #{},
         schemas: #{},
         expects: #{},
@@ -122,6 +137,9 @@ pub fn init(this) {
         screen_h: 800.0,
         viewport: #{ x: 322.0, y: 112.0, w: 640.0, h: 482.0, at: 0 },
         rail_visible: false,
+        // Whether the stage is worth labelling: a strip of it behind an
+        // unfolded panel is the way back, not a viewport.
+        stage_chrome: true,
         rail_shut: false,
         fontdemo: false,
         menu_open: false,
@@ -196,7 +214,8 @@ pub fn init(this) {
     settings::load_files(S);
     theme::apply(S);
     render::set_app_icon("assets/balaur-logo.png");
-    ui::set_scale(S.ui_scale);
+    S.touchscreen = engine::platform().touchscreen;
+    shell::set_ui_scale(S, shell::scale_for_screen(S));
     // The shell redraws when something asks, not every frame: on the web the
     // pass is most of the frame, and nothing in it moves untouched.
     ui::set_lazy(true);
@@ -206,12 +225,8 @@ pub fn init(this) {
 
     // Optional start-up states, comma-separated (persona id, "palette",
     // "light", "play", "select:<node>", "shot=<png path>"), applied in order.
-    let states = engine::args().get(1).unwrap_or("");
-    for token in states.split(',') {
-        if token != "" {
-            shell::apply_start_state(S, token);
-        }
-    }
+    // Applied on the first frame, after the screen's class has folded the docks.
+    S.start_states = engine::args().get(1).unwrap_or("");
 }
 
 fn resolve_refs(S) {
@@ -298,7 +313,7 @@ pub fn update(this, dt) {
     let widgets_on = (S.playing || S.persona == "ui") && S.viewport_live;
     // Inset by the strip the axis and zoom pills own, so a bottom-anchored
     // HUD label sits above the editor's chrome instead of under it.
-    let band = if widgets_on { center::HUD_H + 6.0 } else { 0.0 };
+    let band = if widgets_on { center::hud_h(S) + 6.0 } else { 0.0 };
     ui::set_widget_layer(widgets_on, rect.x, rect.y, rect.w, util::max(0.0, rect.h - band));
     // The shell is on its own surface, declared rather than assumed: an
     // unconfigured layer takes the default one, and the default is off
@@ -366,127 +381,137 @@ pub fn draw_ui(this) {
     // window asks for it whatever the setting says.
     let compact = S.settings.compact || sw < COMPACT_W;
     S.compact = compact;
+    let first = !S.platform_read;
+    S.platform_read = true;
+    docks::follow_screen(S, ui::width_class(), ui::height_class());
+    if first {
+        for token in S.start_states.split(',') {
+            if token != "" {
+                shell::apply_start_state(S, token);
+            }
+        }
+    }
 
     // The popup owns the arrows, Tab, Enter and Escape while it is open, so
     // the shell's own keys do not fire under it.
     let completing = complete::key(S);
-    if ui::shortcut("cmd", "K") {
+    if ui::shortcut("cmd+k") {
         if S.palette {
             shell::close_palette(S);
         } else {
             shell::open_palette(S, "");
         }
     }
-    if ui::shortcut("cmd", "S") {
+    if ui::shortcut("cmd+s") {
         shell::save_active(S);
     }
-    if ui::shortcut("alt+shift", "F") {
+    if ui::shortcut("alt+shift+f") {
         shell::format_active(S);
     }
-    if ui::shortcut("cmd", "B") {
+    if ui::shortcut("cmd+b") {
         shell::goto_definition(S);
     }
-    if ui::shortcut("cmd+shift", "R") {
+    if ui::shortcut("cmd+shift+r") {
         refactor::open(S, "rename");
     }
-    if ui::shortcut("cmd+shift", "F") {
+    if ui::shortcut("cmd+shift+f") {
         refactor::open(S, "replace");
     }
     // Before the split's chord: a key arrives as its physical code, so `⌘\`
     // matches the shifted one too unless this consumes it first.
-    if ui::shortcut("cmd+shift", "Backslash") {
+    if ui::shortcut("cmd+shift+backslash") {
         shell::toggle_focus(S);
     }
-    if ui::shortcut("cmd", "Backslash") {
+    if ui::shortcut("cmd+backslash") {
         shell::toggle_split(S);
     }
-    if ui::shortcut("cmd", "Equals") {
-        shell::set_ui_scale(S, S.ui_scale + 0.125);
+    if ui::shortcut("cmd+equals") {
+        shell::ask_ui_scale(S, S.ui_scale + 0.125);
     }
-    if ui::shortcut("cmd", "Minus") {
-        shell::set_ui_scale(S, S.ui_scale - 0.125);
+    if ui::shortcut("cmd+minus") {
+        shell::ask_ui_scale(S, S.ui_scale - 0.125);
     }
-    if ui::shortcut("cmd", "Comma") {
+    if ui::shortcut("cmd+comma") {
         settings::open(S);
     }
-    if ui::shortcut("cmd", "E") {
+    if ui::shortcut("cmd+e") {
         exporter::open(S);
     }
     // Debugger keys work with the code editor focused: they are not text.
     if S.debug.paused is Object {
-        if ui::shortcut("none", "F5") {
+        if ui::shortcut("f5") {
             shell::resume(S, debugger::CONTINUE);
-        } else if ui::shortcut("none", "F10") {
+        } else if ui::shortcut("f10") {
             shell::resume(S, debugger::STEP_OVER);
-        } else if ui::shortcut("none", "F11") {
+        } else if ui::shortcut("f11") {
             shell::resume(S, debugger::STEP_INTO);
-        } else if ui::shortcut("shift", "F11") {
+        } else if ui::shortcut("shift+f11") {
             shell::resume(S, debugger::STEP_OUT);
         }
     }
     if !ui::wants_keyboard() {
-        if !(S.debug.paused is Object) && ui::shortcut("none", "F5") {
+        if !(S.debug.paused is Object) && ui::shortcut("f5") {
             shell::toggle_play(S);
         }
-        if S.playing && !(S.debug.paused is Object) && ui::shortcut("none", "F6") {
+        if S.playing && !(S.debug.paused is Object) && ui::shortcut("f6") {
             debugger::request_break();
         }
         let personas = ["scene", "script", "anim", "phys", "ui"];
         for (i, id) in personas.iter().enumerate() {
-            if ui::shortcut("alt", format!("{}", i + 1)) {
+            if ui::shortcut(format!("alt+{}", i + 1)) {
                 shell::set_persona(S, id);
             }
         }
-        if ui::shortcut("shift", "A") {
+        if ui::shortcut("shift+a") {
             model::add_child(S, None);
         }
-        if ui::shortcut("alt", "S") {
+        if ui::shortcut("alt+s") {
             shell::attach_script(S);
         }
-        if ui::shortcut("shift", "R") {
+        if ui::shortcut("shift+r") {
             shell::reload_scripts(S);
         }
         // ⌘V is read from the paste event above; the clipboard cannot be read
         // on demand, so only the copy half is a chord.
-        if ui::shortcut("cmd", "C") {
+        if ui::shortcut("cmd+c") {
             ui::set_clipboard(model::copy_selected(S));
         }
         // Gated with the rest, so typing in the code editor keeps egui's own
         // per-widget undo; redo first, to claim the shifted chord.
-        if ui::shortcut("shift+cmd", "Z") || ui::shortcut("cmd", "Y") {
+        if ui::shortcut("shift+cmd+z") || ui::shortcut("cmd+y") {
             shell::redo(S);
-        } else if ui::shortcut("cmd", "Z") {
+        } else if ui::shortcut("cmd+z") {
             shell::undo(S);
         }
-        if ui::shortcut("alt", "L") {
+        if ui::shortcut("alt+l") {
             theme::set_dark(S, !S.theme.dark);
         }
-        if ui::shortcut("cmd", "A") {
+        if ui::shortcut("cmd+a") {
             selection::select_all(S);
         }
         // Shifted first, so the plain chord does not eat the shifted one.
-        if ui::shortcut("shift+cmd", "G") {
+        if ui::shortcut("shift+cmd+g") {
             arrange::ungroup(S);
-        } else if ui::shortcut("cmd", "G") {
+        } else if ui::shortcut("cmd+g") {
             arrange::group(S);
         }
-        if ui::shortcut("shift+cmd", "L") {
+        if ui::shortcut("shift+cmd+l") {
             arrange::unlock_all(S);
-        } else if ui::shortcut("cmd", "L") {
+        } else if ui::shortcut("cmd+l") {
             arrange::toggle_locked(S);
         }
-        if ui::shortcut("shift", "H") {
+        if ui::shortcut("shift+h") {
             arrange::show_all(S);
-        } else if ui::shortcut("none", "H") {
+        } else if ui::shortcut("h") {
             arrange::toggle_hidden(S);
         }
-        if ui::shortcut("none", "Slash") {
+        if ui::shortcut("slash") {
             arrange::toggle_isolate(S);
         }
-        if S.persona == "anim" && ui::shortcut("none", "K") {
+        if S.persona == "anim" && ui::shortcut("k") {
             anim::add_key(S, S.anim.time);
         }
-        if !completing && ui::shortcut("none", "Escape") {
+        if !completing && ui::shortcut("escape") {
             polygon::cancel(S);
             pen::cancel(S);
             tiles::cancel(S);

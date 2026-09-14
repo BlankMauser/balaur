@@ -208,9 +208,35 @@ pub fn open_palette(S, query) {
     ui::set_text("palette-query", query);
 }
 
+/// The reader asking for a scale, which outranks what the screen wanted.
+pub fn ask_ui_scale(S, f) {
+    S.asked_scale = util::clamp(f, 0.75, 2.5);
+    set_ui_scale(S, S.asked_scale);
+}
+
 pub fn set_ui_scale(S, f) {
     S.ui_scale = util::clamp(f, 0.75, 2.5);
     ui::set_scale(S.ui_scale);
+}
+
+// What a finger needs, and the box the theme's `touch` tables state for a
+// control. The scale is what makes the one the other, rounded up to 0.05.
+const TOUCH_TARGET = 44.0;
+pub const TOUCH_CONTROL = 33.0;
+
+fn touch_scale() {
+    math::ceil(TOUCH_TARGET / TOUCH_CONTROL * 20.0) / 20.0
+}
+
+/// The scale this screen wants: what the reader set, and at least enough on a
+/// touch screen that the smallest control clears a finger.
+pub fn scale_for_screen(S) {
+    let asked = S.asked_scale;
+    let wanted = touch_scale();
+    if S.touchscreen && asked < wanted {
+        return wanted;
+    }
+    asked
 }
 
 pub fn close_palette(S) {

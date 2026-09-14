@@ -50,7 +50,7 @@
     },
     "widget_theme": {
       "directory": "themes",
-      "doc": "How each widget kind is drawn, one table per kind. `[colors]` names shared fills and `[roles.<name>]` is a look a widget picks with `role`.\n\n```toml\ntype = \"widget_theme\"            # a widget takes the theme of the nearest ancestor naming one\n\n[colors]                         # named fills the rest of the file may use\nink = \"#1b1b1b\"\nsky = \"#3aa0ff\"\n\n[button]                         # one table per kind: [panel], [row], ...; a kind left out keeps the built-in look\nfill = \"sky\"\nstroke = \"ink\"\nstroke_width = 1.0\nradius = 6.0\npadding = 8.0\ngap = 4.0\nsize = 14.0\ncolor = \"ink\"                    # text colour\nicon_color = \"ink\"\nfont = \"ui\"\nstrong = true\n\n[button.hover]                   # the look under the pointer; [button.active] while pressed\nfill = \"#5cb4ff\"\n\n[panel]\nimage = \"art/panel.png\"          # a nine-patch, sliced in its own pixels\nslice = [8, 8, 8, 8]             # left, top, right, bottom\n\n[roles.danger]                   # what a widget with role = \"danger\" takes\nfill = \"#d33a3a\"\n```"
+      "doc": "How each widget kind is drawn, one table per kind. `[colors]` names shared fills and `[roles.<name>]` is a look a widget picks with `role`.\n\n```toml\ntype = \"widget_theme\"            # a widget takes the theme of the nearest ancestor naming one\n\n[colors]                         # named fills the rest of the file may use\nink = \"#1b1b1b\"\nsky = \"#3aa0ff\"\nlink = \"#3aa0ff\"                 # what a `[url]` span in markup text is drawn in\n\n[button]                         # one table per kind: [panel], [row], ...; a kind left out keeps the built-in look\nfill = \"sky\"\nstroke = \"ink\"\nstroke_width = 1.0\nradius = 6.0\npadding = 8.0\ngap = 4.0\nsize = 14.0\ncolor = \"ink\"                    # text colour\nicon_color = \"ink\"\nfont = \"ui\"\nstrong = true\n\n[button.hover]                   # the look under the pointer; [button.active] while pressed\nfill = \"#5cb4ff\"\n\n[panel]\nimage = \"art/panel.png\"          # a nine-patch, sliced in its own pixels\nslice = [8, 8, 8, 8]             # left, top, right, bottom\n\n[roles.danger]                   # what a widget with role = \"danger\" takes\nfill = \"#d33a3a\"\n```"
     }
   },
   "component_docs": {
@@ -986,6 +986,13 @@
         "group": "shape",
         "type": "bool"
       },
+      "concavity": {
+        "default": 0.01,
+        "description": "How deep a dent a vhacd piece may keep before it is cut again",
+        "group": "shape",
+        "min": 0.0,
+        "type": "float"
+      },
       "contact_force_threshold": {
         "default": 0.0,
         "description": "How hard a contact must be before on_contact_force is called",
@@ -1082,6 +1089,7 @@
           "halfspace",
           "trimesh",
           "convex_hull",
+          "convex_decomposition",
           "polyline",
           "heightfield",
           "voxels"
@@ -1177,12 +1185,29 @@
         "min": 0.0,
         "type": "float"
       },
+      "max_pieces": {
+        "default": 1024.0,
+        "description": "The most pieces a vhacd cut may leave",
+        "group": "shape",
+        "min": 1.0,
+        "type": "float"
+      },
       "mesh": {
         "asset": "mesh",
         "default": "",
-        "description": "Points and triangles for a trimesh, convex_hull or polyline collider: the same asset a polygon draws",
+        "description": "Points and triangles for a trimesh, convex_hull, convex_decomposition or polyline collider: the same asset a polygon draws",
         "group": "shape",
         "type": "asset"
+      },
+      "method": {
+        "default": "exact",
+        "description": "How a convex_decomposition is cut: exact, over the mesh's own triangles, or vhacd, which voxelises the outline",
+        "group": "shape",
+        "options": [
+          "exact",
+          "vhacd"
+        ],
+        "type": "enum"
       },
       "normal": {
         "default": [
@@ -1229,10 +1254,25 @@
         "group": "shape",
         "type": "bool"
       },
+      "overlap": {
+        "default": 0.9,
+        "description": "How far a convex_decomposition piece grows through each seam it shares, so nothing wedges into one: 0 leaves the plain pieces, 1 grows flush with the face that stops it",
+        "group": "shape",
+        "max": 1.0,
+        "min": 0.0,
+        "type": "float"
+      },
       "radius": {
         "default": 0.5,
         "description": "Circle radius, when kind is circle or capsule",
         "min": 0.01,
+        "type": "float"
+      },
+      "resolution": {
+        "default": 64.0,
+        "description": "How fine the voxel grid is, when method is vhacd",
+        "group": "shape",
+        "min": 1.0,
         "type": "float"
       },
       "restitution": {
@@ -4127,11 +4167,28 @@
         ],
         "type": "enum"
       },
+      "arrows": {
+        "default": false,
+        "description": "Draw a step up and a step down beside a `drag_value`, each moving it by `step` within `min` and `max`",
+        "group": "type",
+        "type": "bool"
+      },
       "avoid_keyboard": {
         "default": false,
         "description": "On a root: measure the bottom of the surface from the top of the on-screen keyboard, so a form or a chat bar stays above it; nothing on a desktop",
         "group": "placement",
         "type": "bool"
+      },
+      "axis": {
+        "default": "both",
+        "description": "Which way a scroll moves; the other way its contents fill the box it was given",
+        "group": "layout",
+        "options": [
+          "both",
+          "horizontal",
+          "vertical"
+        ],
+        "type": "enum"
       },
       "checked": {
         "default": false,
@@ -4163,6 +4220,12 @@
         "min": 0,
         "type": "int"
       },
+      "context": {
+        "default": "",
+        "description": "Name of a `menu` node whose rows open at the pointer on a right click or a long press; give that menu `visible = false` to show no button of its own",
+        "group": "events",
+        "type": "string"
+      },
       "deadzone": {
         "default": 0.0,
         "description": "How far a finger drags a `scroll` before it scrolls, in design pixels, so a tap on a child still lands; 0 scrolls at once",
@@ -4180,6 +4243,13 @@
         "description": "What fills a `draw` widget: a script method on this node or the nearest scripted ancestor, or `scripts/file.rn:function` for a free function",
         "group": "paint",
         "type": "string"
+      },
+      "duration": {
+        "default": 3.0,
+        "description": "How long a `toast` stays, in seconds, counting the half second it fades over; zero leaves it up until the game takes it away",
+        "group": "type",
+        "min": 0.0,
+        "type": "float"
       },
       "fill": {
         "default": "",
@@ -4276,6 +4346,27 @@
         "min": 0.0,
         "type": "float"
       },
+      "hide_narrower": {
+        "default": 0.0,
+        "description": "Not drawn while the room is narrower than this many design pixels. The room is the nearest container that states a size or grows, and the screen for a root: a minimum in numbers, where the class words are not fine enough. Zero is no line",
+        "group": "placement",
+        "min": 0.0,
+        "type": "float"
+      },
+      "hide_shorter": {
+        "default": 0.0,
+        "description": "Not drawn while the room is shorter than this many design pixels. Zero is no line",
+        "group": "placement",
+        "min": 0.0,
+        "type": "float"
+      },
+      "hide_wider": {
+        "default": 0.0,
+        "description": "Not drawn while the room is this wide or wider, in design pixels: a control only a small space wants. Zero is no line",
+        "group": "placement",
+        "min": 0.0,
+        "type": "float"
+      },
       "icon": {
         "default": "",
         "description": "A glyph from the theme's icon family, drawn before `text`",
@@ -4342,6 +4433,7 @@
           "flow",
           "fold",
           "dialog",
+          "toast",
           "window",
           "separator",
           "code",
@@ -4418,6 +4510,12 @@
         "group": "events",
         "type": "string"
       },
+      "on_link": {
+        "default": "",
+        "description": "Script method called with the target of a `[url=target]` span in `markup` text that was clicked, on this node or the nearest ancestor whose script declares it",
+        "group": "events",
+        "type": "string"
+      },
       "on_submit": {
         "default": "",
         "description": "Script method called with a `field`'s text on Enter, or when focus leaves it, on this node or the nearest ancestor whose script declares it",
@@ -4459,6 +4557,18 @@
         "group": "value",
         "type": "string"
       },
+      "placement": {
+        "default": "below",
+        "description": "Where a `menu` opens: under its button, above it, at the pointer, or centred on the screen",
+        "group": "placement",
+        "options": [
+          "below",
+          "above",
+          "pointer",
+          "center"
+        ],
+        "type": "enum"
+      },
       "radius": {
         "default": -1.0,
         "description": "Corner radius in design pixels; below zero takes the theme's own, which for a button is as round as its text is tall",
@@ -4478,11 +4588,29 @@
         "min": 0.0,
         "type": "float"
       },
+      "safe_area": {
+        "default": false,
+        "description": "Keep this root clear of what a notch, a status bar or a home bar covers. Off by default: a backdrop is meant to reach the edge and a control is not",
+        "group": "placement",
+        "type": "bool"
+      },
       "secret": {
         "default": false,
         "description": "Draw a `field`'s text as dots, for a password",
         "group": "value",
         "type": "bool"
+      },
+      "selectable": {
+        "default": false,
+        "description": "Let a drag over this label select its text, and the platform's copy key take it",
+        "group": "type",
+        "type": "bool"
+      },
+      "shortcut": {
+        "default": "",
+        "description": "A chord that clicks this widget wherever it is, as `cmd+shift+s` or `f5`; a menu row fires while its menu is shut, and draws the chord against its far edge unless it says its own `trailing`",
+        "group": "events",
+        "type": "string"
       },
       "showing": {
         "default": false,
@@ -4517,6 +4645,12 @@
         "default": "",
         "description": "The outline around this widget, as `#rrggbb` or a name from the theme's `[colors]`; empty takes the theme's own",
         "group": "paint",
+        "type": "string"
+      },
+      "suffix": {
+        "default": "",
+        "description": "Units drawn after a `drag_value`'s number, the way `placeholder` is drawn before it",
+        "group": "type",
         "type": "string"
       },
       "text": {
@@ -5219,6 +5353,7 @@
       "docs": {
         "area": "The polygon's area, always positive whatever its winding.",
         "contains": "Whether a point lies inside the polygon; a point on an edge counts as inside.",
+        "convex_decomposition": "The polygon cut into convex pieces that overlap across their seams, so nothing wedges into one; `overlap` from 0 to 1 says how far each piece grows, 0.9 by default.",
         "convex_hull": "The smallest convex polygon around the points, counter-clockwise.",
         "difference": "Everything inside the first polygon and outside the second, shaped as `union` shapes it.",
         "intersection": "Everything inside both polygons, shaped as `union` shapes it.",
@@ -5230,6 +5365,7 @@
       "functions": [
         "area",
         "contains",
+        "convex_decomposition",
         "convex_hull",
         "difference",
         "intersection",
@@ -5242,6 +5378,7 @@
       "signatures": {
         "area": "Value -> f64",
         "contains": "(Value, Value) -> bool",
+        "convex_decomposition": "(Value, Option<Value>) -> Value",
         "convex_hull": "Value -> Value",
         "difference": "(Value, Value) -> Value",
         "intersection": "(Value, Value) -> Value",
@@ -6898,6 +7035,10 @@
         {
           "name": "SHAPE_CIRCLE",
           "value": "circle"
+        },
+        {
+          "name": "SHAPE_CONVEX_DECOMPOSITION",
+          "value": "convex_decomposition"
         },
         {
           "name": "SHAPE_CONVEX_HULL",
@@ -8674,6 +8815,10 @@
           "value": "normal"
         },
         {
+          "name": "MEDIUM",
+          "value": "medium"
+        },
+        {
           "name": "MOD_ALT",
           "value": "alt"
         },
@@ -8688,6 +8833,30 @@
         {
           "name": "MOD_SHIFT",
           "value": "shift"
+        },
+        {
+          "name": "NARROW",
+          "value": "narrow"
+        },
+        {
+          "name": "POINTER",
+          "value": "pointer"
+        },
+        {
+          "name": "SHORT",
+          "value": "short"
+        },
+        {
+          "name": "TALL",
+          "value": "tall"
+        },
+        {
+          "name": "TOUCH",
+          "value": "touch"
+        },
+        {
+          "name": "WIDE",
+          "value": "wide"
         },
         {
           "name": "WIDGET_BUTTON",
@@ -8798,6 +8967,10 @@
           "value": "text_area"
         },
         {
+          "name": "WIDGET_TOAST",
+          "value": "toast"
+        },
+        {
           "name": "WIDGET_TREE",
           "value": "tree"
         },
@@ -8829,6 +9002,7 @@
         "focus_previous": "Move focus to the previous widget in scene order, wrapping past the first.",
         "focused": "The widget node focus is on, or nil.",
         "frame": "Wrap the callback in a box with optional `fill`, `stroke`, `radius` and padding, in design pixels. `tooltip`, `menu` and `menu_click` make the whole box answer the pointer, the way a pill does, and `hover_fill` is the colour it takes while the pointer is over it.",
+        "height_class": "How much height this screen has, as `ui::SHORT` or `ui::TALL`.",
         "horizontal": "Lay the callback's widgets out in a row; `width`, `height` and `tight` size it, in design pixels.",
         "image": "Draw a PNG from the project, sized by `width`/`height` in design pixels and cached by path. `region` (`[x, y, w, h]` in the image's own pixels) draws one part of it, which is how an atlas is shown a tile at a time.",
         "image_button": "The same picture, answering a click: returns whether it was clicked this frame. Takes every `image` option plus `selected`, which draws the `stroke` border a chosen tile needs, and the `menu`/`menu_click` callbacks a pill takes.",
@@ -8843,20 +9017,20 @@
         "request_repaint": "Run the UI pass this frame even when lazy; call it every frame something on screen moves without input, such as while the scene plays.",
         "right": "Lay the callback's widgets out against the right edge, still declared left to right.",
         "right_panel": "Dock a column down the right of the window and draw the callback inside it; `width` is in design pixels. Answers the width it ended up with.",
-        "scale": "The global UI scale: real pixels per design pixel.",
+        "scale": "The global UI scale: how many screen pixels a design pixel is drawn at, on top of the display's own.",
         "screen_size": "The window's width and height, in design pixels.",
-        "scroll": "Put the callback in a vertical scroll area; `max_height` caps it, `stick_to_bottom` follows new content, and `offset` scrolls it to that many design pixels down.",
+        "scroll": "Put the callback in a scroll area. `axis` is `vertical` (the default), `horizontal` or `both`; `max_height` and `max_width` cap it, `stick_to_bottom` follows new content, and `offset` scrolls it to that many design pixels along.",
         "separator": "Draw a one-pixel rule across the container, in the given `#rrggbb` colour when one is passed.",
         "set_clipboard": "Copy text to the system clipboard.",
         "set_focus": "Put focus on a widget node. A node focus cannot activate is refused at the next draw.",
         "set_keyboard_focus": "Let the arrows, Tab, Enter and Space move and activate the focused widget. Off unless asked for, so a game that moves with the arrows does not click its own HUD; `standard_app` turns it on for a project declaring the `ui_*` actions.",
         "set_lazy": "Run the UI pass only when something asks for it (input, `request_repaint`, a log line, an asset reload, an egui animation, or the idle tick every 250 ms, which waits out a drag the UI is no part of) and re-present the last pass in between. Off by default: a HUD that reads live state each frame should leave it off. Ignored offscreen.",
-        "set_scale": "Set the global UI scale, clamped to between 0.25 and 3.0 real pixels per design pixel; a design resolution is `screen_size` divided by it.",
+        "set_scale": "Set the global UI scale, clamped to between 0.25 and 3.0. It is egui's zoom factor, so it grows every control and every font; `screen_size` already answers in the design pixels it leaves.",
         "set_text": "Overwrite what the field with this `id` is editing, leaving the seed its `value` option last wrote alone.",
         "set_theme": "Replace the theme: `name = \"#rrggbb\"` colour tokens, `dark = true|false`, and a `roles` table of named looks a widget takes with `role:`.",
         "set_widget_layer": "Turn drawing of the scene's `widget` nodes on or off, and confine it to an x/y/w/h rect in design pixels.",
         "set_widget_surface": "The same for one named surface: roots whose `layer` is this name draw here instead. A name nothing has set takes the default surface.",
-        "shortcut": "Whether this chord was pressed this frame, consuming it; `mods` is `\"cmd+shift\"`, from the `MOD_*` constants. `cmd` is the platform's command key: Command on a Mac, Control everywhere else.",
+        "shortcut": "Whether this chord was pressed this frame, consuming it: modifiers and a key joined by `+`, as in `\"cmd+shift+s\"` or `\"f5\"`. `cmd` is the platform's command key, Command on a Mac and Control everywhere else.",
         "slider": "Draw a horizontal slider between `min` and `max`; returns the value after this frame and whether it moved.",
         "spacing": "Set the gap between the current container's widgets, in design pixels.",
         "text_field": "Draw a single-line text box keyed by `id`; returns its text, whether it changed, and whether Enter was pressed.",
@@ -8866,6 +9040,7 @@
         "wants_keyboard": "Whether a UI widget holds keyboard focus, so the game should leave this frame's key presses alone.",
         "wants_pointer": "Whether a UI widget took this frame's pointer or finger, so the game should leave it alone: what stops a tap on a HUD button also firing the shot behind it. False without a window.",
         "widget_rect": "Where a `widget` node was last drawn, as `#{ x, y, w, h }` in design pixels; empty until it has drawn once.",
+        "width_class": "How much width this screen has, as `ui::NARROW`, `ui::MEDIUM` or `ui::WIDE`. Read every frame: a rotation changes it. A run with no window answers `ui::WIDE`.",
         "window": "Draw the callback in a floating window the user drags and resizes; false once its close button is used."
       },
       "functions": [
@@ -8890,6 +9065,7 @@
         "focus_previous",
         "focused",
         "frame",
+        "height_class",
         "horizontal",
         "image",
         "image_button",
@@ -8927,6 +9103,7 @@
         "wants_keyboard",
         "wants_pointer",
         "widget_rect",
+        "width_class",
         "window"
       ],
       "name": "ui",
@@ -8952,6 +9129,7 @@
         "focus_previous": "() -> ()",
         "focused": "() -> Value",
         "frame": "(Option<Value>, CallbackId) -> ()",
+        "height_class": "() -> &str",
         "horizontal": "(Option<Value>, CallbackId) -> ()",
         "image": "(String, Option<Value>) -> ()",
         "image_button": "(String, Option<Value>) -> bool",
@@ -8979,7 +9157,7 @@
         "set_theme": "Value -> ()",
         "set_widget_layer": "(bool, Option<f32>, Option<f32>, Option<f32>, Option<f32>) -> ()",
         "set_widget_surface": "(String, bool, Option<f32>, Option<f32>, Option<f32>, Option<f32>) -> ()",
-        "shortcut": "(String, String) -> bool",
+        "shortcut": "String -> bool",
         "slider": "(f32, f32, f32, Option<Value>) -> (f32, bool)",
         "spacing": "(f32, f32) -> ()",
         "text_field": "(String, Option<String>, Option<Value>) -> (String, bool, bool)",
@@ -8989,6 +9167,7 @@
         "wants_keyboard": "() -> bool",
         "wants_pointer": "() -> bool",
         "widget_rect": "NodeId -> Value",
+        "width_class": "() -> &str",
         "window": "(String, Option<Value>, CallbackId) -> bool"
       }
     },
